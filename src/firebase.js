@@ -1,5 +1,7 @@
-import { initializeApp } from "firebase/app";
+// src/firebase.js
+import { initializeApp, getApps, getApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
+import { getAuth } from "firebase/auth";
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -16,5 +18,10 @@ if (!firebaseConfig.apiKey) {
   throw new Error('❌ Firebase config missing! Add VITE_FIREBASE_* to .env file.');
 }
 
-const app = initializeApp(firebaseConfig);
+// initialize app only once (prevents re-init during HMR)
+const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
+
+// exports
 export const db = getFirestore(app);
+export const auth = getAuth(app);
+export default app;
