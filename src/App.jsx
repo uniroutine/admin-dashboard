@@ -54,8 +54,8 @@ function AppRoutes() {
     <Route element={<RequireAuth />}>
     <Route path="/add-data" element={<AddData />} />
     <Route path="/" element={<Home />} />
-    <Route path="/table" element={<RoutineManager />} />
-    <Route path="/about" element={<AboutUs />} />
+    <Route path="/edit-routine" element={<RoutineManager />} />
+    <Route path="/about-us" element={<AboutUs />} />
     </Route>
 
     {/* Fallback: if user is authenticated show Home, otherwise RequireAuth redirects to /login */}
@@ -72,8 +72,8 @@ function MainNav({ onSignOut }) {
     <ul>
     <li><Link to="/">Home</Link></li>
     <li><Link to="/add-data">Add Data</Link></li>
-    <li><Link to="/table">View Routine</Link></li>
-    <li><Link to="/about">About Us</Link></li>
+    <li><Link to="/edit-routine">Edit Routine</Link></li>
+    <li><Link to="/about-us">About Us</Link></li>
     <li style={{ marginLeft: 12 }}>
     <button
     onClick={onSignOut}

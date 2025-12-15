@@ -1,3 +1,8 @@
+/* =========================
+   table.css (updated)
+   ========================= */
+
+/* container */
 .table-container {
   max-width: 1200px;
   margin: 2rem auto;
@@ -12,23 +17,37 @@
   font-weight: 600;
 }
 
+/* table wrapper */
 .table-wrapper {
   overflow-x: auto;
   border: 3px solid #e0e0e0;
   border-radius: 12px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
   background: white;
+
+  /* ===== FIX: remove small blank bar above the header =====
+     Ensure the wrapper and table have no top margin/padding or border-spacing
+     so the header row sits flush. This is intentionally non-invasive. */
+  margin-top: 0 !important;
+  padding-top: 0 !important;
 }
 
+/* core table */
 .routine-table {
   width: 100%;
   border-collapse: collapse;
   min-width: 800px;
+
+  /* Ensure no default border spacing and no top margin */
+  margin: 0 !important;
+  border-spacing: 0 !important;
 }
 
+/* head cells */
 .routine-table th {
   background: linear-gradient(to bottom, #f8f9fa, #f1f3f5);
-  padding: 1.2rem 1rem;
+  /* slightly reduced top padding to avoid visual gap while keeping readable spacing */
+  padding: 0.9rem 1rem;
   text-align: center;
   font-weight: 600;
   color: #2d3748;
@@ -36,6 +55,7 @@
   font-size: 1rem;
 }
 
+/* table cells */
 .routine-table td {
   padding: 1rem;
   border-bottom: 1px solid #edf2f7;
@@ -43,6 +63,7 @@
   transition: background-color 0.2s ease;
 }
 
+/* day column */
 .day-column {
   width: 130px;
   background: #f8fafc;
@@ -175,19 +196,20 @@
   .routine-table {
     font-size: 0.85rem;
   }
-  
+
   .day-column,
   .day-cell {
     width: 100px;
     font-size: 0.9rem;
   }
-  
+
   .subject-select {
     padding: 8px;
     font-size: 13px;
     padding-right: 32px;
   }
 }
+
 /* === Tree Dropdown Styles === */
 .tree-dropdown {
   display: flex;

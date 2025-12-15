@@ -1,10 +1,11 @@
 // src/components/table.jsx
 import React, { useState, useEffect } from 'react';
+import Select from 'react-select';
 import { db } from '../firebase';
-import { collection, getDocs } from 'firebase/firestore';
+import { collection, getDocs, onSnapshot, doc, setDoc, deleteDoc } from 'firebase/firestore';
 import './table.css';
 
-//  Import libraries for DOCX generation and file saving
+// Import libraries for DOCX generation and file saving
 import { Packer, Document, Table, TableRow, TableCell, Paragraph, WidthType, BorderStyle, AlignmentType, VerticalAlign } from 'docx';
 import { saveAs } from 'file-saver';
 
@@ -15,34 +16,144 @@ function RoutineTable({
   isTeacherAvailable = () => true,
   getConflictingRoutine = () => null 
 }) {
-  // Initialize schedule with objects instead of strings
-  const [schedule, setSchedule] = useState([
-    { time: '9:00 - 10:00', subjects: Array(5).fill({ subjectCode: '', teacherId: '' }) },
-    { time: '10:00 - 11:00', subjects: Array(5).fill({ subjectCode: '', teacherId: '' }) },
-    { time: '11:00 - 12:00', subjects: Array(5).fill({ subjectCode: '', teacherId: '' }) },
-    { time: '12:00 - 1:00', isLunch: true, lunchText: 'Lunch Break' },
-    { time: '1:00 - 2:00', subjects: Array(5).fill({ subjectCode: '', teacherId: '' }) },
-    { time: '2:00 - 3:00', subjects: Array(5).fill({ subjectCode: '', teacherId: '' }) },
-    { time: '3:00 - 4:00', subjects: Array(5).fill({ subjectCode: '', teacherId: '' }) },
-    { time: '4:00 - 5:00', subjects: Array(5).fill({ subjectCode: '', teacherId: '' }) },
-  ]);
+  // Routine selection states
+  const [routines, setRoutines] = useState([]);
+  const [selectedRoutine, setSelectedRoutine] = useState(null);
+  const [scheduleData, setScheduleData] = useState({});
+  
+  const daysToFetch = ['mon', 'tue', 'wed', 'thu', 'fri'];
+  
+  const dayDisplayNames = {
+    'mon': 'Monday',
+    'tue': 'Tuesday',
+    'wed': 'Wednesday',
+    'thu': 'Thursday',
+    'fri': 'Friday'
+  };
+
+  const dayToKey = {
+    'Monday': 'mon',
+    'Tuesday': 'tue',
+    'Wednesday': 'wed',
+    'Thursday': 'thu',
+    'Friday': 'fri'
+  };
 
   const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
-  const timeHeaders = schedule.map(row => row.time);
+  
+  const timeSlots = [
+    { period: 1, time: '9:00 - 10:00' },
+    { period: 2, time: '10:00 - 11:00' },
+    { period: 3, time: '11:00 - 12:00' },
+    { period: 4, time: '12:00 - 1:00', isLunch: true },
+    { period: 5, time: '1:00 - 2:00' },
+    { period: 6, time: '2:00 - 3:00' },
+    { period: 7, time: '3:00 - 4:00' },
+    { period: 8, time: '4:00 - 5:00' }
+  ];
 
   const [subjectsMap, setSubjectsMap] = useState({});
   const [loadingSubjects, setLoadingSubjects] = useState(true);
+  const [loadingSchedule, setLoadingSchedule] = useState(false);
   const [error, setError] = useState('');
   const [activeCell, setActiveCell] = useState(null);
   const [teachersCache, setTeachersCache] = useState({});
-  
-  // State to show user feedback when an assignment is blocked
   const [feedbackMessage, setFeedbackMessage] = useState(null);
+  const [saving, setSaving] = useState(false);
 
+  const [editData, setEditData] = useState({
+    subjectCode: '',
+    subjectName: '',
+    teacherId: '',
+    teacherName: '',
+    room: ''
+  });
 
-  // 🆕 New: editable schedule title
-  const [scheduleTitle, setScheduleTitle] = useState('Weekly Schedule');
+  const routineOptions = routines.map(routine => ({
+    value: routine.id,
+    label: routine.name || routine.id,
+    data: routine
+  }));
 
+  const selectedOption = selectedRoutine 
+    ? routineOptions.find(opt => opt.value === selectedRoutine.id) 
+    : null;
+
+  // Fetch all routines from Firestore
+  useEffect(() => {
+    const unsubscribe = onSnapshot(
+      collection(db, 'routines'),
+      (snapshot) => {
+        if (!snapshot.empty) {
+          const routinesList = snapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+          }));
+          setRoutines(routinesList);
+        } else {
+          setRoutines([]);
+        }
+      },
+      (err) => {
+        console.error('Error fetching routines:', err);
+        setError('Failed to load routines.');
+      }
+    );
+
+    return () => unsubscribe();
+  }, []);
+
+  // Fetch schedule data when a routine is selected
+  useEffect(() => {
+    if (!selectedRoutine) {
+      setScheduleData({});
+      return;
+    }
+
+    setLoadingSchedule(true);
+    const unsubscribers = [];
+
+    daysToFetch.forEach(day => {
+      const dayRef = collection(db, 'routines', selectedRoutine.id, day);
+      
+      const unsubscribe = onSnapshot(dayRef, (snapshot) => {
+        if (!snapshot.empty) {
+          const periods = [];
+          snapshot.forEach(doc => {
+            periods.push({
+              id: doc.id,
+              periodNumber: parseInt(doc.id),
+              ...doc.data()
+            });
+          });
+          
+          periods.sort((a, b) => a.periodNumber - b.periodNumber);
+          
+          setScheduleData(prev => ({
+            ...prev,
+            [day]: periods
+          }));
+        } else {
+          setScheduleData(prev => ({
+            ...prev,
+            [day]: []
+          }));
+        }
+        setLoadingSchedule(false);
+      }, (err) => {
+        console.error(`Error fetching ${day} schedule:`, err);
+        setLoadingSchedule(false);
+      });
+
+      unsubscribers.push(unsubscribe);
+    });
+
+    return () => {
+      unsubscribers.forEach(unsub => unsub());
+    };
+  }, [selectedRoutine]);
+
+  // Load subjects
   useEffect(() => {
     const loadSubjects = async () => {
       try {
@@ -68,6 +179,8 @@ function RoutineTable({
   }, []);
 
   const loadTeachersForSubject = async (subjectCode) => {
+    if (teachersCache[subjectCode]) return;
+    
     try {
       const teachersRef = collection(db, 'subjects', subjectCode, 'teachers');
       const snapshot = await getDocs(teachersRef);
@@ -81,117 +194,234 @@ function RoutineTable({
     }
   };
 
-  const handleSubjectSelect = (dayIndex, timeIndex, subjectCode) => {
-    // Get previous teacher ID before updating
-    const prevTeacherId = schedule[timeIndex].subjects[dayIndex].teacherId;
+  const getPeriodData = (day, periodNumber) => {
+    const dayKey = day.toLowerCase().substring(0, 3);
+    const daySchedule = scheduleData[dayKey];
     
-    // If clearing subject, also clear teacher from global schedule
-    if (!subjectCode && prevTeacherId) {
-      updateTeacherSchedule(routineId, dayIndex, schedule[timeIndex].time, null, prevTeacherId);
+    if (!daySchedule) return null;
+    
+    const period = daySchedule.find(p => p.periodNumber === periodNumber);
+    
+    if (!period) return null;
+    
+    return {
+      subject: period.sname || period.subject || period.name || '',
+      teacher: period.tname || period.teacher || period.faculty || '',
+      code: period.scode || period.code || '',
+      room: period.room || period.venue || '',
+      teacherId: period.teacherId || '',
+      subjectCode: period.scode || period.code || ''
+    };
+  };
+
+  const handleRoutineSelect = (option) => {
+    if (option) {
+      setSelectedRoutine(option.data);
+      setActiveCell(null);
+      setFeedbackMessage(null);
+    } else {
+      setSelectedRoutine(null);
+      setScheduleData({});
     }
+  };
+
+  const handleCellClick = (day, period) => {
+    if (!selectedRoutine) return;
     
-    setSchedule(prev =>
-      prev.map((row, tIdx) =>
-        tIdx === timeIndex && !row.isLunch
-          ? {
-              ...row,
-              subjects: row.subjects.map((cell, dIdx) =>
-                dIdx === dayIndex ? { subjectCode, teacherId: '' } : cell
-              ),
-            }
-          : row
-      )
-    );
+    const periodData = getPeriodData(day, period);
+    
+    setActiveCell({ day, period });
+    setEditData({
+      subjectCode: periodData?.subjectCode || periodData?.code || '',
+      subjectName: periodData?.subject || periodData?.name || '',
+      teacherId: periodData?.teacherId || '',
+      teacherName: periodData?.teacher || '',
+      room: periodData?.room || ''
+    });
+    setFeedbackMessage(null);
+
+    if (periodData?.subjectCode || periodData?.code) {
+      loadTeachersForSubject(periodData?.subjectCode || periodData?.code);
+    }
+  };
+
+  const handleSubjectSelect = async (subjectCode) => {
+    const subjectName = subjectCode ? subjectsMap[subjectCode]?.name || '' : '';
+    
+    setEditData(prev => ({
+      ...prev,
+      subjectCode,
+      subjectName,
+      teacherId: '',
+      teacherName: ''
+    }));
 
     if (subjectCode) {
-      loadTeachersForSubject(subjectCode);
+      await loadTeachersForSubject(subjectCode);
     }
-
-    setActiveCell({ dayIndex, timeIndex });
-    setFeedbackMessage(null); // Clear any existing warning
   };
 
-  const handleTeacherSelect = (dayIndex, timeIndex, teacherId) => {
-    const timeSlot = schedule[timeIndex].time;
-    const prevTeacherId = schedule[timeIndex].subjects[dayIndex].teacherId;
-    const subjectData = schedule[timeIndex].subjects[dayIndex];
-    const teacherName = teachersCache[subjectData.subjectCode]?.[teacherId] || 'Selected Teacher';
+  const handleTeacherSelect = (teacherId) => {
+    const teacherName = teacherId && editData.subjectCode 
+      ? teachersCache[editData.subjectCode]?.[teacherId] || '' 
+      : '';
 
-    // 1. STRICT BLOCKING CHECK: If teacherId is present AND they are not available, block assignment.
-    if (teacherId && !isTeacherAvailable(routineId, dayIndex, timeSlot, teacherId)) {
-      const conflictingRoutineNumber = getConflictingRoutine(routineId, dayIndex, timeSlot, teacherId);
+    if (teacherId && activeCell) {
+      const timeSlot = timeSlots.find(s => s.period === activeCell.period)?.time;
+      const dayIndex = days.indexOf(activeCell.day);
       
-      setFeedbackMessage({
-        type: 'error',
-        message: `🛑 Cannot assign ${teacherName}. They are already scheduled in Routine ${conflictingRoutineNumber} at this time.`
-      });
-      
-      // Close the active cell editor immediately upon blocking
-      setActiveCell(null);
-      return; 
-    } 
-    
-    // If teacherId is empty (clearing teacher), or if available (no conflict):
-    
-    // Clear any previous feedback/warnings
-    setFeedbackMessage(null); 
-
-    // Update global teacher schedule
-    updateTeacherSchedule(routineId, dayIndex, timeSlot, teacherId, prevTeacherId);
-    
-    // Update local schedule state
-    setSchedule(prev =>
-      prev.map((row, tIdx) =>
-        tIdx === timeIndex && !row.isLunch
-          ? {
-              ...row,
-              subjects: row.subjects.map((cell, dIdx) =>
-                dIdx === dayIndex ? { ...cell, teacherId } : cell
-              ),
-            }
-          : row
-      )
-    );
-    setActiveCell(null);
-  };
-
-  const clearSelection = (dayIndex, timeIndex) => {
-    const prevTeacherId = schedule[timeIndex].subjects[dayIndex].teacherId;
-    const timeSlot = schedule[timeIndex].time;
-    
-    // Clear from global schedule
-    if (prevTeacherId) {
-      updateTeacherSchedule(routineId, dayIndex, timeSlot, null, prevTeacherId);
+      if (!isTeacherAvailable(selectedRoutine?.id, dayIndex, timeSlot, teacherId)) {
+        const conflictingRoutineNumber = getConflictingRoutine(selectedRoutine?.id, dayIndex, timeSlot, teacherId);
+        
+        setFeedbackMessage({
+          type: 'error',
+          message: `Cannot assign ${teacherName}. Already scheduled in Routine ${conflictingRoutineNumber}.`
+        });
+        return;
+      }
     }
-    
-    setSchedule(prev =>
-      prev.map((row, tIdx) =>
-        tIdx === timeIndex && !row.isLunch
-          ? {
-              ...row,
-              subjects: row.subjects.map((cell, dIdx) =>
-                dIdx === dayIndex ? { subjectCode: '', teacherId: '' } : cell
-              ),
-            }
-          : row
-      )
-    );
-    setActiveCell(null);
+
+    setEditData(prev => ({
+      ...prev,
+      teacherId,
+      teacherName
+    }));
     setFeedbackMessage(null);
   };
 
-  // 🆕 Updated: use editable title in DOCX generation
+  const handleRoomChange = (room) => {
+    setEditData(prev => ({
+      ...prev,
+      room
+    }));
+  };
+
+  const saveCell = async () => {
+    if (!selectedRoutine || !activeCell) return;
+
+    const { day, period } = activeCell;
+    const dayKey = dayToKey[day];
+    
+    if (!dayKey) {
+      setFeedbackMessage({ type: 'error', message: 'Invalid day selected.' });
+      return;
+    }
+
+    setSaving(true);
+    setFeedbackMessage(null);
+
+    try {
+      const periodDocRef = doc(db, 'routines', selectedRoutine.id, dayKey, String(period));
+
+      if (!editData.subjectCode) {
+        await deleteDoc(periodDocRef);
+        setFeedbackMessage({ type: 'success', message: 'Cell cleared successfully!' });
+      } else {
+        await setDoc(periodDocRef, {
+          scode: editData.subjectCode,
+          sname: editData.subjectName,
+          teacherId: editData.teacherId,
+          tname: editData.teacherName,
+          room: editData.room,
+          updatedAt: new Date().toISOString()
+        }, { merge: true });
+
+        setFeedbackMessage({ type: 'success', message: 'Saved successfully!' });
+      }
+
+      const timeSlot = timeSlots.find(s => s.period === period)?.time;
+      const dayIndex = days.indexOf(day);
+      const prevData = getPeriodData(day, period);
+      
+      if (prevData?.teacherId !== editData.teacherId) {
+        updateTeacherSchedule(
+          selectedRoutine.id, 
+          dayIndex, 
+          timeSlot, 
+          editData.teacherId, 
+          prevData?.teacherId
+        );
+      }
+
+      setTimeout(() => {
+        setActiveCell(null);
+        setFeedbackMessage(null);
+      }, 1000);
+
+    } catch (err) {
+      console.error('Error saving cell:', err);
+      setFeedbackMessage({ 
+        type: 'error', 
+        message: `Failed to save: ${err.message}` 
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const clearCell = async () => {
+    if (!selectedRoutine || !activeCell) return;
+
+    const { day, period } = activeCell;
+    const dayKey = dayToKey[day];
+
+    setSaving(true);
+
+    try {
+      const periodDocRef = doc(db, 'routines', selectedRoutine.id, dayKey, String(period));
+      await deleteDoc(periodDocRef);
+
+      const timeSlot = timeSlots.find(s => s.period === period)?.time;
+      const dayIndex = days.indexOf(day);
+      const prevData = getPeriodData(day, period);
+      
+      if (prevData?.teacherId) {
+        updateTeacherSchedule(selectedRoutine.id, dayIndex, timeSlot, null, prevData.teacherId);
+      }
+
+      setFeedbackMessage({ type: 'success', message: 'Cell cleared!' });
+      
+      setTimeout(() => {
+        setActiveCell(null);
+        setFeedbackMessage(null);
+      }, 1000);
+
+    } catch (err) {
+      console.error('Error clearing cell:', err);
+      setFeedbackMessage({ type: 'error', message: `Failed to clear: ${err.message}` });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const cancelEdit = () => {
+    setActiveCell(null);
+    setEditData({
+      subjectCode: '',
+      subjectName: '',
+      teacherId: '',
+      teacherName: '',
+      room: ''
+    });
+    setFeedbackMessage(null);
+  };
+
   const handleDownload = () => {
-    const doc = new Document({
+    if (!selectedRoutine) {
+      alert('Please select a routine first.');
+      return;
+    }
+
+    const docFile = new Document({
       sections: [
         {
           children: [
             new Paragraph({
-              text: scheduleTitle || 'Weekly Schedule',
+              text: selectedRoutine.name || selectedRoutine.id || 'Weekly Schedule',
               heading: 'Heading1',
               alignment: AlignmentType.CENTER,
             }),
-            new Paragraph({}), // Empty line
+            new Paragraph({}),
 
             new Table({
               width: { size: 100, type: WidthType.PERCENTAGE },
@@ -204,31 +434,29 @@ function RoutineTable({
               rows: [
                 new TableRow({
                   children: [
-                    new TableCell({ children: [new Paragraph('Day')] }),
-                    ...timeHeaders.map(time => new TableCell({ children: [new Paragraph(time)] })),
+                    new TableCell({ children: [new Paragraph('Day / Time')] }),
+                    ...timeSlots.map(slot => new TableCell({ children: [new Paragraph(slot.time)] })),
                   ],
                 }),
-                ...days.map((day, dayIndex) =>
+                ...days.map((day) =>
                   new TableRow({
                     children: [
                       new TableCell({ children: [new Paragraph(day)] }),
-                      ...schedule.map((row, timeIndex) => {
-                        if (row.isLunch) {
+                      ...timeSlots.map((slot) => {
+                        if (slot.isLunch) {
                           return new TableCell({
-                            children: [new Paragraph(row.lunchText)],
+                            children: [new Paragraph('Lunch Break')],
                             verticalAlign: VerticalAlign.CENTER,
                           });
                         }
-                        const cellData = row.subjects[dayIndex];
-                        const subjectCode = cellData.subjectCode;
-                        const teacherId = cellData.teacherId;
-                        const subject = subjectCode ? subjectsMap[subjectCode] : null;
-                        const subjectTeachers = subjectCode ? teachersCache[subjectCode] || {} : {};
-                        const cellText = subjectCode
-                          ? `[${subjectCode}] ${subject?.name || 'Unknown'}\n${
-                              teacherId ? subjectTeachers[teacherId] || 'Teacher not found' : ''
-                            }`
-                          : 'No Subject';
+                        const periodData = getPeriodData(day, slot.period);
+                        let cellText = '-';
+                        if (periodData && periodData.subject) {
+                          cellText = `${periodData.subject}`;
+                          if (periodData.code) cellText += `\n[${periodData.code}]`;
+                          if (periodData.teacher) cellText += `\n${periodData.teacher}`;
+                          if (periodData.room) cellText += `\nRoom: ${periodData.room}`;
+                        }
                         return new TableCell({
                           children: [new Paragraph(cellText)],
                           verticalAlign: VerticalAlign.CENTER,
@@ -244,9 +472,10 @@ function RoutineTable({
       ],
     });
 
-    Packer.toBlob(doc)
+    Packer.toBlob(docFile)
       .then(blob => {
-        saveAs(blob, `${scheduleTitle || 'weekly_schedule'}.docx`);
+        const fileName = selectedRoutine.name || selectedRoutine.id || 'schedule';
+        saveAs(blob, `${fileName}_routine.docx`);
       })
       .catch(err => {
         console.error('Error generating DOCX:', err);
@@ -257,7 +486,6 @@ function RoutineTable({
   if (loadingSubjects) {
     return (
       <div className="table-container">
-        <h2 className="table-title">{scheduleTitle}</h2>
         <p className="loading">Loading subjects...</p>
       </div>
     );
@@ -266,11 +494,10 @@ function RoutineTable({
   if (error) {
     return (
       <div className="table-container">
-        <h2 className="table-title">{scheduleTitle}</h2>
         <div className="error-box">
           <p className="error-message">{error}</p>
           <button className="btn-retry" onClick={() => window.location.reload()}>
-            🔄 Refresh
+            Refresh
           </button>
         </div>
       </div>
@@ -279,149 +506,213 @@ function RoutineTable({
 
   return (
     <div className="table-container">
-      {/* 🆕 Editable title input */}
-      <div className="title-edit-section">
-        <input
-          type="text"
-          value={scheduleTitle}
-          onChange={(e) => setScheduleTitle(e.target.value)}
-          className="title-input"
-          placeholder="Enter routine title (e.g. 1st Sem Schedule)"
+
+      <div className="routine-selector">
+        <label>Select Routine:</label>
+        <Select
+          value={selectedOption}
+          onChange={handleRoutineSelect}
+          options={routineOptions}
+          className="routine-select"
+          classNamePrefix="routine-select"
+          placeholder="Choose a routine..."
+          isSearchable={true}
+          isClearable={true}
+          isDisabled={loadingSchedule}
+          noOptionsMessage={() => "No routines found. Create one in the admin panel."}
         />
       </div>
-      
-      {/* Show feedback message (Error/Warning when selecting teacher) */}
+
       {feedbackMessage && (
-        <div className={`conflict-warning ${feedbackMessage.type === 'error' ? 'feedback-error' : ''}`}>
+        <div className={`feedback-message ${feedbackMessage.type === 'error' ? 'feedback-error' : 'feedback-success'}`}>
           {feedbackMessage.message}
         </div>
       )}
 
-      <div className="table-wrapper">
-        <table className="routine-table">
-          <thead>
-            <tr>
-              <th className="day-column">Day</th>
-              {timeHeaders.map((time, idx) => (
-                <th key={idx} className={schedule[idx].isLunch ? 'lunch-header' : ''}>
-                  {time}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {days.map((day, dayIndex) => (
-              <tr key={dayIndex}>
-                <td className="day-cell">{day}</td>
-                {schedule.map((row, timeIndex) => {
-                  if (row.isLunch) {
-                    return (
-                      <td key={timeIndex} className="lunch-cell">
-                        <div className="lunch-text">{row.lunchText}</div>
-                      </td>
-                    );
-                  }
-                  const cellData = row.subjects[dayIndex];
-                  const subjectCode = cellData.subjectCode;
-                  const teacherId = cellData.teacherId;
-                  const subject = subjectCode ? subjectsMap[subjectCode] : null;
-                  const subjectTeachers = subjectCode ? teachersCache[subjectCode] || {} : {};
-                  const isActive = activeCell?.dayIndex === dayIndex && activeCell?.timeIndex === timeIndex;
-                  
-                  // Check if this cell currently displays a conflict
-                  const hasConflict = teacherId && !isTeacherAvailable(routineId, dayIndex, row.time, teacherId);
+      {loadingSchedule && (
+        <div className="loading-box">Loading schedule...</div>
+      )}
 
-                  return (
-                    <td 
-                      key={timeIndex} 
-                      className={`subject-cell ${hasConflict ? 'has-conflict' : ''}`}
+      {selectedRoutine && !loadingSchedule && (
+        <>
+          <h2 className="table-title">
+            {selectedRoutine.name || selectedRoutine.id}
+          </h2>
+
+          <div className="table-wrapper">
+            <table className="routine-table">
+              <thead>
+                <tr>
+                  <th className="day-column">Day / Time</th>
+                  {timeSlots.map((slot, idx) => (
+                    <th 
+                      key={idx} 
+                      className={slot.isLunch ? 'lunch-header' : 'period-header'}
                     >
-                      {isActive ? (
-                        <div className="tree-dropdown">
-                          <select
-                            value={subjectCode}
-                            onChange={(e) => handleSubjectSelect(dayIndex, timeIndex, e.target.value)}
-                            className="subject-select"
-                            autoFocus
-                          >
-                            <option value="">-- Select Subject --</option>
-                            {Object.entries(subjectsMap).map(([code, data]) => (
-                              <option key={code} value={code}>
-                                [{code}] {data.name}
-                              </option>
-                            ))}
-                          </select>
+                      {slot.time}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {days.map((day, dayIndex) => (
+                  <tr key={dayIndex}>
+                    <td className="day-cell">
+                      <div className="day-name">{day}</div>
+                    </td>
+                    {timeSlots.map((slot, idx) => {
+                      if (slot.isLunch) {
+                        return (
+                          <td key={idx} className="lunch-cell">
+                            <div className="lunch-content">
+                              <span className="lunch-text">Lunch Break</span>
+                            </div>
+                          </td>
+                        );
+                      }
 
-                          {subjectCode && Object.keys(subjectTeachers).length > 0 && (
-                            <select
-                              value={teacherId}
-                              onChange={(e) =>
-                                handleTeacherSelect(dayIndex, timeIndex, e.target.value)
-                              }
-                              className="teacher-select"
-                            >
-                              <option value="">-- Select Teacher --</option>
-                              {Object.entries(subjectTeachers).map(([id, name]) => {
-                                const isUnavailable = !isTeacherAvailable(routineId, dayIndex, row.time, id);
-                                const conflictRoutine = isUnavailable ? getConflictingRoutine(routineId, dayIndex, row.time, id) : null;
-                                
-                                return (
-                                  <option 
-                                    key={id} 
-                                    value={id}
-                                    className={isUnavailable ? 'teacher-unavailable' : ''}
-                                  >
-                                    {name} {isUnavailable ? `(⚠️ Routine ${conflictRoutine})` : ''}
-                                  </option>
-                                );
-                              })}
-                            </select>
-                          )}
+                      const periodData = getPeriodData(day, slot.period);
+                      const isActive = activeCell?.day === day && activeCell?.period === slot.period;
 
-                          <button
-                            type="button"
-                            className="btn-clear"
-                            onClick={() => clearSelection(dayIndex, timeIndex)}
-                          >
-                            ✕ Clear
-                          </button>
-                        </div>
-                      ) : subjectCode ? (
-                        <div
-                          className={`cell-display ${hasConflict ? 'conflict-cell' : ''}`}
-                          onClick={() => setActiveCell({ dayIndex, timeIndex })}
+                      return (
+                        <td 
+                          key={idx} 
+                          className={`subject-cell ${isActive ? 'cell-active' : ''}`}
                         >
-                          <div className="subject-name">[{subjectCode}] {subject?.name}</div>
-                          {teacherId && subjectCode && (
-                            <div className="teacher-name">
-                              {subjectTeachers[teacherId] || 'Teacher not found'}
-                              {hasConflict && (
-                                <span className="conflict-indicator"> ⚠️</span>
+                          {isActive ? (
+                            <div className="cell-editor">
+                              <select
+                                value={editData.subjectCode}
+                                onChange={(e) => handleSubjectSelect(e.target.value)}
+                                className="edit-select"
+                                disabled={saving}
+                              >
+                                <option value="">-- Select Subject --</option>
+                                {Object.entries(subjectsMap).map(([code, data]) => (
+                                  <option key={code} value={code}>
+                                    [{code}] {data.name}
+                                  </option>
+                                ))}
+                              </select>
+
+                              {editData.subjectCode && teachersCache[editData.subjectCode] && (
+                                <select
+                                  value={editData.teacherId}
+                                  onChange={(e) => handleTeacherSelect(e.target.value)}
+                                  className="edit-select"
+                                  disabled={saving}
+                                >
+                                  <option value="">-- Select Teacher --</option>
+                                  {Object.entries(teachersCache[editData.subjectCode] || {}).map(([id, name]) => {
+                                    const timeSlot = timeSlots.find(s => s.period === slot.period)?.time;
+                                    const isUnavailable = !isTeacherAvailable(selectedRoutine?.id, dayIndex, timeSlot, id);
+                                    const conflictRoutine = isUnavailable ? getConflictingRoutine(selectedRoutine?.id, dayIndex, timeSlot, id) : null;
+                                    
+                                    return (
+                                      <option 
+                                        key={id} 
+                                        value={id}
+                                        className={isUnavailable ? 'teacher-unavailable' : ''}
+                                      >
+                                        {name} {isUnavailable ? `(Routine ${conflictRoutine})` : ''}
+                                      </option>
+                                    );
+                                  })}
+                                </select>
+                              )}
+
+                              {editData.subjectCode && (
+                                <input
+                                  type="text"
+                                  value={editData.room}
+                                  onChange={(e) => handleRoomChange(e.target.value)}
+                                  placeholder="Room"
+                                  className="edit-input"
+                                  disabled={saving}
+                                />
+                              )}
+
+                              <div className="edit-actions">
+                                <button 
+                                  onClick={saveCell} 
+                                  className="btn-save"
+                                  disabled={saving}
+                                >
+                                  {saving ? 'Saving...' : 'Save'}
+                                </button>
+                                <button 
+                                  onClick={clearCell} 
+                                  className="btn-clear"
+                                  disabled={saving}
+                                >
+                                  Clear
+                                </button>
+                                <button 
+                                  onClick={cancelEdit} 
+                                  className="btn-cancel"
+                                  disabled={saving}
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <div 
+                              className="cell-content cell-clickable"
+                              onClick={() => handleCellClick(day, slot.period)}
+                            >
+                              {periodData && periodData.subject ? (
+                                <>
+                                  <div className="subject-name">{periodData.subject}</div>
+                                  {periodData.code && (
+                                    <div className="subject-code">[{periodData.code}]</div>
+                                  )}
+                                  {periodData.teacher && (
+                                    <div className="teacher-name">{periodData.teacher}</div>
+                                  )}
+                                  {periodData.room && (
+                                    <div className="room-name">Room: {periodData.room}</div>
+                                  )}
+                                </>
+                              ) : (
+                                <div className="cell-empty">
+                                  <span className="add-text">+ Add</span>
+                                </div>
                               )}
                             </div>
                           )}
-                        </div>
-                      ) : (
-                        <div
-                          className="cell-placeholder"
-                          onClick={() => setActiveCell({ dayIndex, timeIndex })}
-                        >
-                          + Add Subject
-                        </div>
-                      )}
-                    </td>
-                  );
-                })}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
 
-      {/* Download button */}
-      <button onClick={handleDownload} className="btn-download">
-        Download as DOCX
-      </button>
+          <button onClick={handleDownload} className="btn-download">
+            Download as DOCX
+          </button>
+
+          <div className="info-footer">
+            <p>Changes are saved to the database automatically.</p>
+          </div>
+        </>
+      )}
+
+      {!selectedRoutine && routines.length > 0 && !loadingSchedule && (
+        <div className="no-selection">
+          <h3>Select a Routine</h3>
+          <p>Choose a routine from the dropdown to view and edit the schedule</p>
+        </div>
+      )}
+
+      {routines.length === 0 && !loadingSubjects && (
+        <div className="no-selection">
+          <h3>No Routines Found</h3>
+          <p>Please create a routine from your admin panel or another management page.</p>
+        </div>
+      )}
     </div>
   );
 }
