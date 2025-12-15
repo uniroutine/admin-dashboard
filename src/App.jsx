@@ -1,6 +1,5 @@
 // src/App.jsx
-import { React } from "react";
-import { useEffect } from "react";
+import React, { useEffect } from "react";
 import { useLocation } from "react-router-dom";
 import { MemoryRouter as Router, Routes, Route, Link } from "react-router-dom";
 import "./App.css";
@@ -11,8 +10,8 @@ import RoutineManager from "./components/RoutineManager";
 import AboutUs from "./components/AboutUs";
 import AddData from "./components/AddData";
 
-// Auth pieces (ensure these files exist)
-import { AuthProvider, useAuth } from "./contexts/AuthContext";
+// Auth pieces (we keep useAuth here; AuthProvider is provided in main.jsx)
+import { useAuth } from "./contexts/AuthContext";
 import RequireAuth from "./components/RequireAuth";
 import Login from "./components/Login";
 
@@ -20,16 +19,22 @@ import Login from "./components/Login";
 import { signOut } from "firebase/auth";
 import { auth } from "./firebase";
 
+// OfflineDialog (global) — assumes you created src/components/OfflineDialog.jsx
+import OfflineDialog from "./components/OfflineDialog";
+
 export default function App() {
   const lastRoute = sessionStorage.getItem("lastRoute") || "/";
   return (
-    <AuthProvider>
-      {/* MemoryRouter keeps the browser URL unchanged while still providing routing in-memory */}
-      <Router initialEntries={[lastRoute]}>
-        <RoutePersistence />
-        <AppRoutes />
-      </Router>
-    </AuthProvider>
+    <>
+    {/* Global offline dialog (renders when offline) */}
+    <OfflineDialog />
+
+    {/* MemoryRouter keeps the browser URL unchanged while still providing routing in-memory */}
+    <Router initialEntries={[lastRoute]}>
+    <RoutePersistence />
+    <AppRoutes />
+    </Router>
+    </>
   );
 }
 
@@ -43,46 +48,43 @@ function RoutePersistence() {
   return null;
 }
 
-
 function AppRoutes() {
   const { user, loading } = useAuth();
 
   if (loading) {
     return (
-    <div className="auth-loading-page">
+      <div className="auth-loading-page">
       <div className="auth-loading-box">
-        <div className="spinner" />
-        <div className="auth-loading-text">
-          Checking authentication…
-        </div>
+      <div className="spinner" />
+      <div className="auth-loading-text">Checking authentication…</div>
       </div>
-    </div>
-  );
+      </div>
+    );
   }
 
   return (
     <>
-      {/* Show nav only when authenticated */}
-      {user && <MainNav onSignOut={() => signOut(auth)} />}
-      <div className="app-fade-in">
-        <div className="app-container">
-          <Routes>
-            {/* Public login route (still in-memory) */}
-            <Route path="/login" element={<Login />} />
+    {/* Show nav only when authenticated */}
+    {user && <MainNav onSignOut={() => signOut(auth)} />}
+    <div className="app-fade-in">
+    <div className="app-container">
+    <Routes>
+    {/* Public login route (still in-memory) */}
+    <Route path="/login" element={<Login />} />
 
-            {/* Protected routes (RequireAuth uses in-memory location) */}
-            <Route element={<RequireAuth />}>
-              <Route path="/add-data" element={<AddData />} />
-              <Route path="/" element={<Home />} />
-              <Route path="/edit-routine" element={<RoutineManager />} />
-              <Route path="/about-us" element={<AboutUs />} />
-            </Route>
+    {/* Protected routes (RequireAuth uses in-memory location) */}
+    <Route element={<RequireAuth />}>
+    <Route path="/add-data" element={<AddData />} />
+    <Route path="/" element={<Home />} />
+    <Route path="/edit-routine" element={<RoutineManager />} />
+    <Route path="/about-us" element={<AboutUs />} />
+    </Route>
 
-            {/* Fallback: if user is authenticated show Home, otherwise RequireAuth redirects to /login */}
-            <Route path="*" element={<RequireAuth><Home /></RequireAuth>} />
-          </Routes>
-        </div>
-      </div>
+    {/* Fallback: if user is authenticated show Home, otherwise RequireAuth redirects to /login */}
+    <Route path="*" element={<RequireAuth><Home /></RequireAuth>} />
+    </Routes>
+    </div>
+    </div>
     </>
   );
 }
@@ -99,26 +101,26 @@ function AppRoutes() {
 function MainNav({ onSignOut }) {
   return (
     <nav className="navbar" aria-label="Primary navigation">
-      <div className="nav-inner">
-        <div className="nav-left">
-          <ul className="nav-links">
-            <li><Link to="/">Home</Link></li>
-            <li><Link to="/add-data">Add Data</Link></li>
-            <li><Link to="/edit-routine">Edit Routine</Link></li>
-            <li><Link to="/about-us">About Us</Link></li>
-          </ul>
-        </div>
+    <div className="nav-inner">
+    <div className="nav-left">
+    <ul className="nav-links">
+    <li><Link to="/">Home</Link></li>
+    <li><Link to="/add-data">Add Data</Link></li>
+    <li><Link to="/edit-routine">Edit Routine</Link></li>
+    <li><Link to="/about-us">About Us</Link></li>
+    </ul>
+    </div>
 
-        {/* centered signout button (visually centered across screen) */}
-        <div className="nav-center">
-          <button className="signout-btn" onClick={onSignOut} aria-label="Sign out">
-            Sign out
-          </button>
-        </div>
+    {/* centered signout button (visually centered across screen) */}
+    <div className="nav-center">
+    <button className="signout-btn" onClick={onSignOut} aria-label="Sign out">
+    Sign out
+    </button>
+    </div>
 
-        {/* right placeholder (keeps layout symmetrical and prevents overlaps) */}
-        <div className="nav-right" aria-hidden="true" />
-      </div>
+    {/* right placeholder (keeps layout symmetrical and prevents overlaps) */}
+    <div className="nav-right" aria-hidden="true" />
+    </div>
     </nav>
   );
 }

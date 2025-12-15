@@ -50,7 +50,7 @@ export default function Login() {
       </div>
 
       <section className="login-card">
-        <h1 className="login-title">Sign in</h1>
+        <h1 className="login-title">Admin Dashboard</h1>
 
         <form onSubmit={handleSubmit} className="login-form">
           <label className="login-label">Email</label>
