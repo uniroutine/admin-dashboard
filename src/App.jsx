@@ -11,6 +11,7 @@ import "./App.css";
 // Pages
 import Home from "./components/home";
 import RoutineManager from "./components/RoutineManager";
+import FacultyRoutine from "./components/FacultyRoutine";
 import AboutUs from "./components/AboutUs";
 import AddData from "./components/AddData";
 
@@ -77,6 +78,7 @@ function AppRoutes() {
               <Route path="/" element={<Home />} />
               <Route path="/add-data" element={<AddData />} />
               <Route path="/edit-routine" element={<RoutineManager />} />
+              <Route path="/faculty-routine" element={<FacultyRoutine />} />
               <Route path="/about-us" element={<AboutUs />} />
             </Route>
 
@@ -112,7 +114,10 @@ function MainNav({ onSignOut }) {
             <Link to="/add-data">Add Data</Link>
           </li>
           <li className="hideOnMobile">
-            <Link to="/edit-routine">Edit Routine</Link>
+            <Link to="/edit-routine">Student Routine</Link>
+          </li>
+          <li className="hideOnMobile">
+          <Link to="/faculty-routine">Faculty Routine</Link>
           </li>
           <li className="hideOnMobile">
             <Link to="/about-us">About Us</Link>
@@ -149,6 +154,9 @@ function MainNav({ onSignOut }) {
           </Link>
           <Link to="/edit-routine" onClick={closeMenu}>
             Edit Routine
+          </Link>
+          <Link to="/faculty-routine" onClick={closeMenu}>
+            Faculty Routine
           </Link>
           <Link to="/about-us" onClick={closeMenu}>
             About Us

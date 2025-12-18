@@ -1,0 +1,308 @@
+/* src/components/FacultyRoutine.css
+ *   Re-uses many classes from your table.layout.css & table.feedback.css
+ *   and RoutineManager.css so visuals remain consistent.
+ *   Updated button styling to use skyblue accent color (#dff0ff).
+ */
+
+.faculty-container {
+    max-width: 1200px;
+    margin: 2rem auto;
+    padding: 0 1rem;
+}
+
+.faculty-container h2 {
+    font-size: 1.6rem;
+    margin-bottom: 6px;
+}
+
+.muted {
+    color: #6b7280;
+    margin-bottom: 12px;
+}
+
+/* Teacher selector */
+.teacher-selector {
+    max-width: 480px;
+    margin-bottom: 18px;
+}
+
+.teacher-selector label {
+    display: block;
+    margin-bottom: 6px;
+    font-weight: 600;
+    color: #334155;
+}
+
+/* Top row (title + actions) */
+.faculty-top-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.faculty-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+/* reuse table wrapper look */
+.faculty-wrapper {
+    overflow-x: auto;
+    border: 3px solid #e0e0e0;
+    border-radius: 12px;
+    background: transparent;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+}
+
+/* slight tweaks for faculty cells */
+.faculty-cell-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-height: 140px;
+    overflow-y: auto;
+    padding: 4px;
+}
+
+.faculty-entry {
+    padding: 6px;
+    border-radius: 8px;
+    background: linear-gradient(180deg, #f8fafc, #ffffff);
+    border: 1px solid #e6eef6;
+    box-shadow: 0 4px 10px rgba(2,6,23,0.03);
+}
+
+.faculty-entry-top {
+    display: flex;
+    gap: 8px;
+    align-items: baseline;
+}
+
+.faculty-routine {
+    font-weight: 700;
+    color: #0f172a;
+    font-size: 13px;
+}
+
+.faculty-subcode {
+    font-size: 12px;
+    color: #475569;
+}
+
+.faculty-subject {
+    font-weight: 600;
+    color: #0369a1;
+    margin-top: 4px;
+    font-size: 13px;
+}
+
+/* small adjustments to match other table text sizes */
+.small .table-title {
+    margin-top: 10px;
+    font-size: 1.05rem;
+}
+
+/* preserve existing classes from your table css */
+.info-footer {
+    margin-top: 12px;
+    color: #475569;
+    font-size: 14px;
+}
+
+.no-selection.small h4 {
+    font-size: 1rem;
+    color: #334155;
+}
+
+/* faculty load summary */
+.faculty-load-summary {
+    display: flex;
+    gap: 24px;
+    flex-wrap: wrap;
+    margin: 12px 0 18px;
+    padding: 12px 16px;
+    border-radius: 10px;
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    align-items: center;
+}
+
+.load-item {
+    font-size: 14px;
+    color: #0f172a;
+}
+
+.load-value {
+    font-weight: 700;
+    margin-left: 6px;
+}
+
+.load-muted {
+    font-size: 12px;
+    color: #64748b;
+    margin-left: 6px;
+}
+
+.limit-item {
+    margin-left: 6px;
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+/* Buttons tuned to skyblue accent (#dff0ff) */
+.btn-set-limit {
+    padding: 8px 12px;
+    border-radius: 8px;
+    background: #dff0ff;
+    color: #044e6b;
+    border: 1px solid rgba(3,105,161,0.08);
+    cursor: pointer;
+    font-weight: 600;
+}
+.btn-set-limit:hover { background: #cff0ff; }
+.btn-set-limit.disabled { opacity: 0.6; cursor: default; }
+
+/* Clear button next to limit */
+.btn-clear-limit {
+    background: #fff;
+    border: 1px solid #dff0ff;
+    color: #044e6b;
+    font-size: 12px;
+    cursor: pointer;
+    padding: 6px 8px;
+    border-radius: 6px;
+}
+.btn-clear-limit:hover { background: #f7feff; }
+
+/* over-limit highlight */
+.faculty-load-summary.over-limit {
+    border-color: #fecaca;
+    background: linear-gradient(180deg, #fff1f2, #fff7f7);
+}
+
+.load-warning {
+    margin: 12px 0;
+    padding: 12px;
+    border-radius: 8px;
+    background: #fff7ed;
+    border: 1px solid #ffedd5;
+    color: #92400e;
+    font-weight: 600;
+}
+
+.warn-value {
+    font-weight: 800;
+    color: #b91c1c;
+}
+
+/* Modal styles (simple, matches existing aesthetic) */
+.modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(2,6,23,0.45);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1200;
+}
+
+.modal {
+    background: #ffffff;
+    border-radius: 12px;
+    padding: 18px;
+    width: 420px;
+    box-shadow: 0 10px 30px rgba(2,6,23,0.2);
+    border: 1px solid #e6eef6;
+}
+
+.modal h4 {
+    margin: 0 0 6px;
+    font-size: 18px;
+    color: #0f172a;
+}
+
+.modal-sub {
+    margin: 0 0 12px;
+    color: #475569;
+    font-size: 13px;
+}
+
+.modal-body {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+.modal-label {
+    font-size: 13px;
+    color: #334155;
+}
+
+.modal-input {
+    padding: 10px 12px;
+    border-radius: 8px;
+    border: 1px solid #e2e8f0;
+    outline: none;
+    font-size: 14px;
+}
+
+.modal-note {
+    font-size: 12px;
+    color: #64748b;
+    margin-top: 6px;
+}
+
+.modal-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+    align-items: center;
+}
+
+/* Primary button also uses skyblue accent */
+.btn-primary {
+    background: #dff0ff;
+    color: #044e6b;
+    padding: 8px 12px;
+    border-radius: 8px;
+    border: 1px solid rgba(3,105,161,0.08);
+    cursor: pointer;
+    font-weight: 600;
+}
+.btn-primary:hover { background: #cff0ff; }
+
+/* Secondary is subtle with border */
+.btn-secondary {
+    background: transparent;
+    color: #044e6b;
+    padding: 8px 12px;
+    border-radius: 8px;
+    border: 1px solid #dff0ff;
+    cursor: pointer;
+}
+.btn-secondary:hover { background: #f7feff; }
+
+.btn-link {
+    background: transparent;
+    color: #ef4444;
+    border: none;
+    cursor: pointer;
+    font-size: 13px;
+    padding: 6px 8px;
+}
+.btn-link:hover { text-decoration: underline; }
+
+/* responsive */
+@media (max-width: 768px) {
+    .faculty-entry {
+        padding: 8px;
+    }
+    .day-column, .day-cell {
+        width: 100px;
+    }
+    .modal { width: 92%; }
+}
