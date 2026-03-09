@@ -43,14 +43,15 @@ function RoutineTable({
   const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
   
   const timeSlots = [
-    { period: 1, time: '9:00 - 10:00' },
-    { period: 2, time: '10:00 - 11:00' },
-    { period: 3, time: '11:00 - 12:00' },
-    { period: 4, time: '12:00 - 1:00', isLunch: true },
-    { period: 5, time: '1:00 - 2:00' },
-    { period: 6, time: '2:00 - 3:00' },
-    { period: 7, time: '3:00 - 4:00' },
-    { period: 8, time: '4:00 - 5:00' }
+    { period: 1, time: '9:00 - 9:50' },
+    { period: 2, time: '9:50 - 10:40' },
+    { period: 3, time: '10:40 - 11:30' },
+    { period: 4, time: '11:30 - 12:20' },
+    { period: 5, time: '12:20 - 1:00', isLunch: true },
+    { period: 6, time: '1:00 - 1:50' },
+    { period: 7, time: '1:50 - 2:40' },
+    { period: 8, time: '2:40 - 3:30' },
+    { period: 9, time: '3:30 - 4:20' }
   ];
 
   const [subjectsMap, setSubjectsMap] = useState({});
