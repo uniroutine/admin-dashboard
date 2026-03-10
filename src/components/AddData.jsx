@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { db, auth } from "../firebase"; // keep path if firebase.js is in src/
+import { db, auth } from "../firebase";
 import {
     collection,
     doc,
@@ -8,18 +8,6 @@ import {
     getDocs
 } from "firebase/firestore";
 import "./AddData.css";
-
-/**
- * AddData — unified page:
- * - Column A: Add / Update Subject
- * - Column B: Add / Update Teacher (teachers are subcollection of subjects)
- * - Column C: Add / Update Routine (create routine doc, set name)
- *
- * Notes:
- * - All writes check auth.currentUser (require sign-in). Adjust if your rules
- *   allow unauthenticated writes (not recommended).
- * - Excel import (for subjects) lazy-loads exceljs to avoid large initial bundle.
- */
 
 export default function AddData() {
     // --- Subjects ---
@@ -30,6 +18,7 @@ export default function AddData() {
     // --- Teachers ---
     const [teacherSubject, setTeacherSubject] = useState("");
     const [teacherName, setTeacherName] = useState("");
+    const [teacherDesignation, setTeacherDesignation] = useState("Prof."); // ← from Doc 2
 
     // --- Routines ---
     const [routineId, setRoutineId] = useState("");
@@ -37,7 +26,7 @@ export default function AddData() {
     const [selectedRoutineId, setSelectedRoutineId] = useState("");
     const [routineList, setRoutineList] = useState([]);
 
-    // --- Excel import (subjects) ---
+    // --- Excel import ---
     const [excelFile, setExcelFile] = useState(null);
     const [excelPreviewCount, setExcelPreviewCount] = useState(null);
 
@@ -53,22 +42,20 @@ export default function AddData() {
     const isSignedIn = () => !!auth.currentUser;
 
     const simpleErr = (err) => (err?.code === "permission-denied"
-    ? "Permission denied. Check your auth/roles."
-    : err?.message || String(err));
+        ? "Permission denied. Check your auth/roles."
+        : err?.message || String(err));
 
     const isValidId = (id) => id && !id.includes("/");
 
     // -----------------------
-    // Load existing subjects & routines
+    // Load existing data
     // -----------------------
     const loadSubjects = async () => {
         setLoadingSubjects(true);
         try {
             const snap = await getDocs(collection(db, "subjects"));
-            const items = [];
-            snap.forEach(d => items.push({ id: d.id, name: d.data()?.name || "" }));
-            items.sort((a,b) => a.id.localeCompare(b.id));
-            setAllSubjects(items);
+            const items = snap.docs.map(d => ({ id: d.id, name: d.data()?.name || "" }));
+            setAllSubjects(items.sort((a, b) => a.id.localeCompare(b.id)));
         } catch (err) {
             setStatus("Failed to load subjects: " + simpleErr(err));
         } finally {
@@ -80,10 +67,8 @@ export default function AddData() {
         setLoadingRoutines(true);
         try {
             const snap = await getDocs(collection(db, "routines"));
-            const items = [];
-            snap.forEach(d => items.push({ id: d.id, name: d.data()?.name || "" }));
-            items.sort((a,b) => a.id.localeCompare(b.id));
-            setRoutineList(items);
+            const items = snap.docs.map(d => ({ id: d.id, name: d.data()?.name || "" }));
+            setRoutineList(items.sort((a, b) => a.id.localeCompare(b.id)));
         } catch (err) {
             setStatus("Failed to load routines: " + simpleErr(err));
         } finally {
@@ -135,11 +120,12 @@ export default function AddData() {
         setSaving(true);
         setStatus("");
         try {
+            const fullName = `${teacherDesignation} ${tname}`; // ← designation prepended
             const teachersRef = collection(db, "subjects", teacherSubject, "teachers");
-            await addDoc(teachersRef, { name: tname });
-            setStatus(`Teacher '${tname}' added to ${teacherSubject}.`);
+            await addDoc(teachersRef, { name: fullName });
+            setStatus(`Teacher '${fullName}' added to ${teacherSubject}.`);
             setTeacherName("");
-            await loadSubjects(); // refresh (teacher listing is only available via admin views)
+            await loadSubjects();
         } catch (err) {
             setStatus("Error adding teacher: " + simpleErr(err));
         } finally {
@@ -209,7 +195,6 @@ export default function AddData() {
         if (!excelFile) return setStatus("Select an Excel file first.");
         setStatus("Reading Excel (preview)...");
         try {
-            // lazy import exceljs to reduce bundle size
             const ExcelJS = await import("exceljs");
             const wb = new ExcelJS.Workbook();
             const buffer = await excelFile.arrayBuffer();
@@ -218,7 +203,7 @@ export default function AddData() {
             if (!ws) return setStatus("No worksheet found.");
             let rows = 0;
             ws.eachRow(() => rows++);
-            setExcelPreviewCount(rows - 1); // subtract header
+            setExcelPreviewCount(Math.max(0, rows - 1));
             setStatus(`Preview: ${Math.max(0, rows - 1)} data rows found.`);
         } catch (err) {
             setStatus("Error reading Excel: " + simpleErr(err));
@@ -236,7 +221,7 @@ export default function AddData() {
             await wb.xlsx.load(buffer);
             const ws = wb.worksheets[0];
             if (!ws) throw new Error("No worksheet found");
-            // parse rows (simple: columns Code, Name, Teacher)
+
             const header = [];
             ws.getRow(1).eachCell((cell, colNumber) => {
                 header[colNumber - 1] = String(cell.value || "").toLowerCase().trim();
@@ -246,26 +231,17 @@ export default function AddData() {
             const teacherIdx = header.findIndex(h => h.includes("teacher")) + 1;
             if (!codeIdx || !nameIdx) throw new Error("Excel must include Subject Code and Subject Name columns");
 
-            // naive import row by row (small files). For big files use batches.
-            const results = [];
+            const rows = [];
             ws.eachRow((row, rowNumber) => {
                 if (rowNumber === 1) return;
                 const code = String(row.getCell(codeIdx).value || "").trim();
                 const name = String(row.getCell(nameIdx).value || "").trim();
                 const teacher = teacherIdx ? String(row.getCell(teacherIdx).value || "").trim() : "";
-                if (!code || !name) {
-                    results.push(`Row ${rowNumber}: skipped (missing code/name)`);
-                    return;
-                }
-                // create subject and teacher
-                // note: we don't await inside eachRow; we'll push to promises and await below
-                results.push({ code, name, teacher, rowNumber });
+                if (code && name) rows.push({ code, name, teacher, rowNumber });
             });
 
-            // perform writes sequentially to keep things simple and readable
             let success = 0, failed = 0;
-            for (const r of results) {
-                if (typeof r === "string") continue;
+            for (const r of rows) {
                 try {
                     await setDoc(doc(db, "subjects", r.code), { name: r.name }, { merge: true });
                     if (r.teacher) {
@@ -293,82 +269,88 @@ export default function AddData() {
     // -----------------------
     return (
         <div className="add-data-root">
-        <h1 className="page-title">Add Data</h1>
+            <h1 className="page-title">Add Data</h1>
 
-        <div className="grid">
-        {/* Column 1: Subjects */}
-        <section className="card column">
-        <h3>Subject — Add / Update</h3>
-        <form onSubmit={handleSubjectSave} className="form-stack">
-        <label>Subject Code (ID)</label>
-        <input value={subjectCode} onChange={e => setSubjectCode(e.target.value)} placeholder="e.g. CS101" />
-        <label>Subject Name</label>
-        <input value={subjectName} onChange={e => setSubjectName(e.target.value)} placeholder="e.g. Intro to Programming" />
-        <button type="submit" disabled={saving}>Save Subject</button>
-        </form>
+            <div className="grid">
+                {/* Column 1: Subjects */}
+                <section className="card column">
+                    <h3>Subject — Add / Update</h3>
+                    <form onSubmit={handleSubjectSave} className="form-stack">
+                        <label>Subject Code (ID)</label>
+                        <input value={subjectCode} onChange={e => setSubjectCode(e.target.value)} placeholder="e.g. CS101" />
+                        <label>Subject Name</label>
+                        <input value={subjectName} onChange={e => setSubjectName(e.target.value)} placeholder="e.g. Intro to Programming" />
+                        <button type="submit" disabled={saving}>Save Subject</button>
+                    </form>
 
-        <hr />
+                    <hr />
 
-        <div className="import-section">
-        <label>Import Subjects from Excel (optional)</label>
-        <input type="file" accept=".xlsx" onChange={handleExcelFileChange} />
-        <div className="import-actions">
-        <button onClick={handleExcelPreview} disabled={!excelFile || saving}>Preview</button>
-        <button onClick={handleExcelImport} disabled={!excelFile || saving}>Import</button>
-        </div>
-        {excelPreviewCount !== null && <div className="hint">Preview rows: {excelPreviewCount}</div>}
-        </div>
-        </section>
+                    <div className="import-section">
+                        <label>Import Subjects from Excel (optional)</label>
+                        <input type="file" accept=".xlsx" onChange={handleExcelFileChange} />
+                        <div className="import-actions">
+                            <button onClick={handleExcelPreview} disabled={!excelFile || saving}>Preview</button>
+                            <button onClick={handleExcelImport} disabled={!excelFile || saving}>Import</button>
+                        </div>
+                        {excelPreviewCount !== null && <div className="hint">Preview rows: {excelPreviewCount}</div>}
+                    </div>
+                </section>
 
-        {/* Column 2: Teachers */}
-        <section className="card column">
-        <h3>Teacher — Add</h3>
-        <form onSubmit={handleTeacherSave} className="form-stack">
-        <label>Select Subject</label>
-        <select value={teacherSubject} onChange={e => setTeacherSubject(e.target.value)} disabled={loadingSubjects}>
-        <option value="">-- choose subject --</option>
-        {allSubjects.map(s => <option key={s.id} value={s.id}>{s.id} {s.name ? `— ${s.name}` : ""}</option>)}
-        </select>
+                {/* Column 2: Teachers */}
+                <section className="card column">
+                    <h3>Teacher — Add</h3>
+                    <form onSubmit={handleTeacherSave} className="form-stack">
+                        <label>Select Subject</label>
+                        <select value={teacherSubject} onChange={e => setTeacherSubject(e.target.value)} disabled={loadingSubjects}>
+                            <option value="">-- choose subject --</option>
+                            {allSubjects.map(s => <option key={s.id} value={s.id}>{s.id}{s.name ? ` — ${s.name}` : ""}</option>)}
+                        </select>
 
-        <label>Teacher Name</label>
-        <input value={teacherName} onChange={e => setTeacherName(e.target.value)} placeholder="e.g. Prof. Ada Lovelace" />
+                        <label>Designation</label>
+                        <select value={teacherDesignation} onChange={e => setTeacherDesignation(e.target.value)}>
+                            <option value="Prof.">Professor</option>
+                            <option value="Assoc. Prof.">Associate Professor</option>
+                            <option value="Asst. Prof.">Assistant Professor</option>
+                        </select>
 
-        <button type="submit" disabled={saving}>Add Teacher</button>
-        </form>
+                        <label>Teacher Name</label>
+                        <input value={teacherName} onChange={e => setTeacherName(e.target.value)} placeholder="e.g. Ada Lovelace" />
 
-        <div className="note">Teachers are stored under <code>subjects/&lt;code&gt;/teachers</code>.</div>
-        </section>
+                        <button type="submit" disabled={saving}>Add Teacher</button>
+                    </form>
+                    <div className="note">Teachers are stored under <code>subjects/&lt;code&gt;/teachers</code>.</div>
+                </section>
 
-        {/* Column 3: Routines */}
-        <section className="card column">
-        <h3>Routine — Create / Name</h3>
-        <form onSubmit={handleRoutineCreate} className="form-stack">
-        <label>New Routine ID</label>
-        <input value={routineId} onChange={e => setRoutineId(e.target.value)} placeholder="e.g. IT1" />
-        <button type="submit" disabled={saving}>Add Routine ID</button>
-        </form>
+                {/* Column 3: Routines */}
+                <section className="card column">
+                    <h3>Routine — Create / Name</h3>
+                    <form onSubmit={handleRoutineCreate} className="form-stack">
+                        <label>New Routine ID</label>
+                        <input value={routineId} onChange={e => setRoutineId(e.target.value)} placeholder="e.g. IT1" />
+                        <button type="submit" disabled={saving}>Add Routine ID</button>
+                    </form>
 
-        <hr />
+                    <hr />
 
-        <form onSubmit={handleRoutineSetName} className="form-stack">
-        <label>Choose Routine</label>
-        <select value={selectedRoutineId} onChange={e => setSelectedRoutineId(e.target.value)} disabled={loadingRoutines}>
-        <option value="">-- choose existing routine id--</option>
-        {routineList.map(r => <option key={r.id} value={r.id}>{r.id}{r.name ? ` — ${r.name}` : ""}</option>)}
-        </select>
+                    <form onSubmit={handleRoutineSetName} className="form-stack">
+                        <label>Choose Routine</label>
+                        <select value={selectedRoutineId} onChange={e => setSelectedRoutineId(e.target.value)} disabled={loadingRoutines}>
+                            <option value="">-- choose existing routine --</option>
+                            {routineList.map(r => <option key={r.id} value={r.id}>{r.id}{r.name ? ` — ${r.name}` : ""}</option>)}
+                        </select>
 
-        <label>Or type an ID</label>
-        <input value={routineId} onChange={e => setRoutineId(e.target.value)} placeholder="or type routine id" />
+                        <label>Or type an ID</label>
+                        <input value={routineId} onChange={e => setRoutineId(e.target.value)} placeholder="or type routine id" />
 
-        <label>Routine Name</label>
-        <input value={routineName} onChange={e => setRoutineName(e.target.value)} placeholder="e.g. First Semester" />
+                        <label>Routine Name</label>
+                        <input value={routineName} onChange={e => setRoutineName(e.target.value)} placeholder="e.g. First Semester" />
 
-        <button type="submit" disabled={saving}>Set Routine Name</button>
-        </form>
-        </section>
-        </div>
+                        <button type="submit" disabled={saving}>Set Routine Name</button>
+                    </form>
+                </section>
+            </div>
 
-        <div className="status-bar">{status}</div>
+            <div className="status-bar">{status}</div>
         </div>
     );
 }
