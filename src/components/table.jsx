@@ -2,15 +2,13 @@
 import React, { useState, useEffect } from 'react';
 import Select from 'react-select';
 import { db } from '../firebase';
-import { collection, getDocs, onSnapshot, doc, setDoc, deleteDoc } from 'firebase/firestore';
+import { collection, getDocs, onSnapshot, doc, setDoc, deleteDoc, getDoc } from 'firebase/firestore';
 import './table.layout.css';
 import './table.feedback.css';
 
 import { Packer, Document, Table, TableRow, TableCell, Paragraph, WidthType, BorderStyle, AlignmentType, VerticalAlign } from 'docx';
 import { saveAs } from 'file-saver';
 
-// --- Designation load limits ---
-// Prof = 8, Assoc. Prof = 12, Asst. Prof = 24, default = 12
 function getDesignationLimit(teacherName = '') {
   const n = teacherName.toLowerCase();
   if (n.includes('asst.') || n.includes('assistant')) return { label: 'Assistant Professor', limit: 24 };
@@ -73,87 +71,49 @@ function RoutineTable({
     ? routineOptions.find(opt => opt.value === selectedRoutine.id) 
     : null;
 
-  // --- Check teacher conflict across all other routines ---
-  // Returns: { routineName, conflictSubject } or null
-  const checkTeacherConflictInDatabase = async (teacherId, day, period, currentRoutineId) => {
+  // Single doc read — fast conflict check
+  const checkTeacherConflictInDatabase = async (teacherId, day, period) => {
     if (!teacherId) return null;
     setCheckingConflict(true);
     try {
       const dayKey = dayToKey[day];
-      if (!dayKey) return null;
-      const routinesSnapshot = await getDocs(collection(db, 'routines'));
-      for (const routineDoc of routinesSnapshot.docs) {
-        const rId = routineDoc.id;
-        if (rId === currentRoutineId) continue;
-        const routineName = routineDoc.data().name || rId;
-        const daySnapshot = await getDocs(collection(db, 'routines', rId, dayKey));
-        const periodDoc = daySnapshot.docs.find(d => d.id === String(period));
-        if (periodDoc) {
-          const pd = periodDoc.data();
-          if (pd.teacherId === teacherId) {
-            return {
-              routineName,
-              conflictSubject: pd.sname || pd.subject || ''
-            };
-          }
-        }
+      const slotId = `${dayKey}_${period}`;
+      const slotRef = doc(db, 'Faculty_Routine', teacherId, 'slots', slotId);
+      const slotSnap = await getDoc(slotRef);
+      if (slotSnap.exists()) {
+        return { routineName: slotSnap.data().className };
       }
       return null;
     } catch (err) {
-      console.error('Error checking conflict:', err);
+      console.error('Conflict check failed:', err);
       return null;
     } finally {
       setCheckingConflict(false);
     }
   };
 
-  // --- Check teacher weekly overload across ALL routines ---
-  // Theory = 1.5, Lab = 1. Returns { totalLoad, limit, label, overloaded, overage }
-  const checkTeacherOverload = async (teacherId, teacherName, currentRoutineId, currentDay, currentPeriod, newSubjectName) => {
+  // Single doc read — fast overload check using remainingLoad
+  const checkTeacherOverload = async (teacherId, teacherName, slotLoad) => {
     if (!teacherId) return null;
     try {
-      const daysToScan = ['mon', 'tue', 'wed', 'thu', 'fri'];
-      let theoryCount = 0;
-      let labCount = 0;
-
-      const routinesSnapshot = await getDocs(collection(db, 'routines'));
-      for (const routineDoc of routinesSnapshot.docs) {
-        const rId = routineDoc.id;
-        for (const dayKey of daysToScan) {
-          const daySnapshot = await getDocs(collection(db, 'routines', rId, dayKey));
-          daySnapshot.forEach((periodDoc) => {
-            const data = periodDoc.data();
-            if (!data || data.teacherId !== teacherId) return;
-            // Skip the cell being replaced so we don't double count
-            const isSameCell = rId === currentRoutineId
-              && dayKey === dayToKey[currentDay]
-              && periodDoc.id === String(currentPeriod);
-            if (isSameCell) return;
-            const isLab = /\blab\b|\blaboratory\b/i.test(data.sname || data.subject || '');
-            if (isLab) labCount += 1;
-            else theoryCount += 1;
-          });
-        }
-      }
-
-      // Add the new class being assigned now
-      const newIsLab = /\blab\b|\blaboratory\b/i.test(newSubjectName || '');
-      if (newIsLab) labCount += 1;
-      else theoryCount += 1;
-
-      const totalLoad = Number((theoryCount * 1.5 + labCount * 1).toFixed(2));
+      const teacherDocRef = doc(db, 'Faculty_Routine', teacherId);
+      const teacherSnap = await getDoc(teacherDocRef);
       const { label, limit } = getDesignationLimit(teacherName);
-      const overloaded = totalLoad > limit;
-      const overage = Number((totalLoad - limit).toFixed(2));
 
-      return { totalLoad, limit, label, overloaded, overage };
+      if (teacherSnap.exists()) {
+        const remainingLoad = teacherSnap.data().remainingLoad ?? limit;
+        const overloaded = remainingLoad < slotLoad;
+        const overage = Number((slotLoad - remainingLoad).toFixed(2));
+        return { remainingLoad, limit, label, overloaded, overage };
+      }
+      // Teacher not in Faculty_Routine yet — fresh, use full limit
+      return { remainingLoad: limit, limit, label, overloaded: false, overage: 0 };
     } catch (err) {
       console.error('Error checking overload:', err);
       return null;
     }
   };
 
-  // Fetch all routines
   useEffect(() => {
     const unsubscribe = onSnapshot(
       collection(db, 'routines'),
@@ -165,7 +125,6 @@ function RoutineTable({
     return () => unsubscribe();
   }, []);
 
-  // Fetch schedule when routine selected
   useEffect(() => {
     if (!selectedRoutine) { setScheduleData({}); return; }
     setLoadingSchedule(true);
@@ -183,7 +142,6 @@ function RoutineTable({
     return () => unsubscribers.forEach(u => u());
   }, [selectedRoutine]);
 
-  // Load subjects
   useEffect(() => {
     const loadSubjects = async () => {
       try {
@@ -269,15 +227,13 @@ function RoutineTable({
       : '';
 
     if (teacherId && activeCell && selectedRoutine) {
-      // Conflict check on teacher select
       const conflict = await checkTeacherConflictInDatabase(
-        teacherId, activeCell.day, activeCell.period, selectedRoutine.id
+        teacherId, activeCell.day, activeCell.period
       );
       if (conflict) {
-        const subjectInfo = conflict.conflictSubject ? ` (${conflict.conflictSubject})` : '';
         setFeedbackMessage({
           type: 'error',
-          message: `⚠ Conflict! ${teacherName} is already assigned in "${conflict.routineName}"${subjectInfo} at this same day & period.`
+          message: `⚠ Conflict! This teacher is already assigned to "${conflict.routineName}" at this day & period.`
         });
         return;
       }
@@ -297,31 +253,31 @@ function RoutineTable({
     const dayKey = dayToKey[day];
     if (!dayKey) { setFeedbackMessage({ type: 'error', message: 'Invalid day.' }); return; }
 
-    // 1. Conflict check before saving
+    const slotId = `${dayKey}_${period}`;
+    const prevData = getPeriodData(day, period);
+
+    // 1. Conflict check
     if (editData.teacherId) {
-      const conflict = await checkTeacherConflictInDatabase(
-        editData.teacherId, day, period, selectedRoutine.id
-      );
+      const conflict = await checkTeacherConflictInDatabase(editData.teacherId, day, period);
       if (conflict) {
-        const subjectInfo = conflict.conflictSubject ? ` (${conflict.conflictSubject})` : '';
         setFeedbackMessage({
           type: 'error',
-          message: `⚠ Conflict! ${editData.teacherName} is already assigned in "${conflict.routineName}"${subjectInfo} at this same day & period. Cannot save.`
+          message: `⚠ Conflict! This teacher is already assigned to "${conflict.routineName}" at this day & period. Cannot save.`
         });
         return;
       }
     }
 
-    // 2. Overload check before saving
+    // 2. Overload check
+    const isLab = /\blab\b|\blaboratory\b/i.test(editData.subjectName || '');
+    const slotLoad = isLab ? 1.0 : 1.5;
+
     if (editData.teacherId && editData.subjectName) {
-      const overload = await checkTeacherOverload(
-        editData.teacherId, editData.teacherName,
-        selectedRoutine.id, day, period, editData.subjectName
-      );
+      const overload = await checkTeacherOverload(editData.teacherId, editData.teacherName, slotLoad);
       if (overload && overload.overloaded) {
         setFeedbackMessage({
           type: 'error',
-          message: `⚠ Weekly load full! ${editData.teacherName} (${overload.label}) — Current load: ${overload.totalLoad} / ${overload.limit}. Exceeds limit by ${overload.overage}.`
+          message: `⚠ Weekly load full! ${editData.teacherName} (${overload.label}) — Remaining: ${overload.remainingLoad} / ${overload.limit}. Needs ${slotLoad}, short by ${overload.overage}.`
         });
         return;
       }
@@ -334,9 +290,31 @@ function RoutineTable({
       const periodDocRef = doc(db, 'routines', selectedRoutine.id, dayKey, String(period));
 
       if (!editData.subjectCode) {
+        // --- CLEAR ---
         await deleteDoc(periodDocRef);
+
+        if (prevData?.teacherId) {
+          const prevSlotRef = doc(db, 'Faculty_Routine', prevData.teacherId, 'slots', slotId);
+          const prevSlotSnap = await getDoc(prevSlotRef);
+          await deleteDoc(prevSlotRef);
+
+          // Restore load to old teacher
+          if (prevSlotSnap.exists()) {
+            const restoredLoad = prevSlotSnap.data().load || 0;
+            const oldTeacherRef = doc(db, 'Faculty_Routine', prevData.teacherId);
+            const oldTeacherSnap = await getDoc(oldTeacherRef);
+            if (oldTeacherSnap.exists()) {
+              const oldRemaining = oldTeacherSnap.data().remainingLoad ?? 0;
+              await setDoc(oldTeacherRef, {
+                remainingLoad: Number((oldRemaining + restoredLoad).toFixed(2))
+              }, { merge: true });
+            }
+          }
+        }
+
         setFeedbackMessage({ type: 'success', message: 'Cell cleared successfully!' });
       } else {
+        // --- SAVE ---
         await setDoc(periodDocRef, {
           scode: editData.subjectCode,
           sname: editData.subjectName,
@@ -345,12 +323,64 @@ function RoutineTable({
           room: editData.room,
           updatedAt: new Date().toISOString()
         }, { merge: true });
+
+        // If teacher swapped — restore old teacher's load and delete old slot
+        if (prevData?.teacherId && prevData.teacherId !== editData.teacherId) {
+          const prevSlotRef = doc(db, 'Faculty_Routine', prevData.teacherId, 'slots', slotId);
+          const prevSlotSnap = await getDoc(prevSlotRef);
+          await deleteDoc(prevSlotRef);
+
+          if (prevSlotSnap.exists()) {
+            const restoredLoad = prevSlotSnap.data().load || 0;
+            const oldTeacherRef = doc(db, 'Faculty_Routine', prevData.teacherId);
+            const oldTeacherSnap = await getDoc(oldTeacherRef);
+            if (oldTeacherSnap.exists()) {
+              const oldRemaining = oldTeacherSnap.data().remainingLoad ?? 0;
+              await setDoc(oldTeacherRef, {
+                remainingLoad: Number((oldRemaining + restoredLoad).toFixed(2))
+              }, { merge: true });
+            }
+          }
+        }
+
+        // Write slot
+        if (editData.teacherId) {
+           const facultySlotRef = doc(db, 'Faculty_Routine', editData.teacherId, 'slots', slotId);
+await setDoc(facultySlotRef, {
+  className: selectedRoutine.name || selectedRoutine.id,
+  day: dayKey,
+  period: period,
+  teacherName: editData.teacherName,
+  load: slotLoad,
+  subjectName: editData.subjectName,
+  subjectCode: editData.subjectCode
+});
+
+          // Update teacher parent doc load tracking
+          const { limit } = getDesignationLimit(editData.teacherName);
+          const teacherDocRef = doc(db, 'Faculty_Routine', editData.teacherId);
+          const teacherSnap = await getDoc(teacherDocRef);
+
+          if (teacherSnap.exists()) {
+            const oldRemaining = teacherSnap.data().remainingLoad ?? limit;
+            await setDoc(teacherDocRef, {
+              remainingLoad: Number((oldRemaining - slotLoad).toFixed(2))
+            }, { merge: true });
+          } else {
+            // First time this teacher is assigned
+            await setDoc(teacherDocRef, {
+              teacherName: editData.teacherName,
+              maxLoad: limit,
+              remainingLoad: Number((limit - slotLoad).toFixed(2))
+            });
+          }
+        }
+
         setFeedbackMessage({ type: 'success', message: 'Saved successfully!' });
       }
 
       const timeSlot = timeSlots.find(s => s.period === period)?.time;
       const dayIndex = days.indexOf(day);
-      const prevData = getPeriodData(day, period);
       if (prevData?.teacherId !== editData.teacherId) {
         updateTeacherSchedule(selectedRoutine.id, dayIndex, timeSlot, editData.teacherId, prevData?.teacherId);
       }
@@ -367,15 +397,38 @@ function RoutineTable({
     if (!selectedRoutine || !activeCell) return;
     const { day, period } = activeCell;
     const dayKey = dayToKey[day];
+    const slotId = `${dayKey}_${period}`;
     setSaving(true);
     try {
+      const prevData = getPeriodData(day, period);
+
       await deleteDoc(doc(db, 'routines', selectedRoutine.id, dayKey, String(period)));
+
+      if (prevData?.teacherId) {
+        const prevSlotRef = doc(db, 'Faculty_Routine', prevData.teacherId, 'slots', slotId);
+        const prevSlotSnap = await getDoc(prevSlotRef);
+        await deleteDoc(prevSlotRef);
+
+        // Restore load
+        if (prevSlotSnap.exists()) {
+          const restoredLoad = prevSlotSnap.data().load || 0;
+          const teacherDocRef = doc(db, 'Faculty_Routine', prevData.teacherId);
+          const teacherSnap = await getDoc(teacherDocRef);
+          if (teacherSnap.exists()) {
+            const oldRemaining = teacherSnap.data().remainingLoad ?? 0;
+            await setDoc(teacherDocRef, {
+              remainingLoad: Number((oldRemaining + restoredLoad).toFixed(2))
+            }, { merge: true });
+          }
+        }
+      }
+
       const timeSlot = timeSlots.find(s => s.period === period)?.time;
       const dayIndex = days.indexOf(day);
-      const prevData = getPeriodData(day, period);
       if (prevData?.teacherId) {
         updateTeacherSchedule(selectedRoutine.id, dayIndex, timeSlot, null, prevData.teacherId);
       }
+
       setFeedbackMessage({ type: 'success', message: 'Cell cleared!' });
       setTimeout(() => { setActiveCell(null); setFeedbackMessage(null); }, 1500);
     } catch (err) {
