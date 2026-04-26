@@ -25,6 +25,7 @@ import { auth } from "./firebase";
 
 // Offline
 import OfflineDialog from "./components/OfflineDialog";
+import RoutineGenerator from "./components/RoutineGenerator";
 
 export default function App() {
   const lastRoute = sessionStorage.getItem("lastRoute") || "/";
@@ -82,6 +83,7 @@ function AppRoutes() {
               <Route path="/edit-routine" element={<RoutineManager />} />
               <Route path="/faculty-routine" element={<FacultyRoutine />} />
               <Route path="/about-us" element={<AboutUs />} />
+              <Route path="/routine-generator" element={<RoutineGenerator />} />
             </Route>
 
             <Route
@@ -127,6 +129,9 @@ function MainNav({ onSignOut }) {
           <li className="hideOnMobile">
             <Link to="/about-us">About Us</Link>
           </li>
+          <li className="hideOnMobile">
+           <Link to="/routine-generator">Generator</Link>
+          </li>
         </ul>
       </div>
 
@@ -168,6 +173,9 @@ function MainNav({ onSignOut }) {
           </Link>
           <Link to="/about-us" onClick={closeMenu}>
             About Us
+          </Link>
+          <Link to="/routine-generator" onClick={closeMenu}>
+           Generator
           </Link>
           <button
             className="signout-btn"
