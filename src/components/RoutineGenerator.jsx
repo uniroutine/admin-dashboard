@@ -72,7 +72,7 @@ function generateRoutine(subjectRows, existingSlots, facultyMap, loadUsed) {
     let placed = false;
 
     outer:
-    for (const day of DAYS) {
+    for (const day of [...DAYS].sort(() => Math.random() - 0.5)) {
       for (const slots of ALL_LAB_SLOTS) {
         if (!slots.every(p => !grid[day][p]?.occupied)) continue;
         const teacher = pickTeacher(lab.teacherOptions, facultyMap, day, slots[0], 3.0, loadUsed);
@@ -112,11 +112,13 @@ function generateRoutine(subjectRows, existingSlots, facultyMap, loadUsed) {
     for (let attempt = 0; attempt < periodsLeft; attempt++) {
       let placed = false;
 
-      const dayOrder = [...DAYS].sort((a, b) => (placedDays.has(a) ? 1 : 0) - (placedDays.has(b) ? 1 : 0));
+    const dayOrder = [...DAYS]
+  .sort(() => Math.random() - 0.5)
+  .sort((a, b) => (placedDays.has(a) ? 1 : 0) - (placedDays.has(b) ? 1 : 0));
 
       for (const day of dayOrder) {
         if (placed) break;
-        for (const period of ALL_PERIODS) {
+       for (const period of [...ALL_PERIODS].sort(() => Math.random() - 0.5)) {
           if (grid[day][period]?.occupied) continue;
           const lastP = lastPlacedPeriod[day];
           if (lastP && Math.abs(period - lastP) === 1) continue;
