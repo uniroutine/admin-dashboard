@@ -425,9 +425,25 @@ function RoutineGenerator() {
 
       {error && <div className="rg-error">{error}</div>}
 
-      <button className="rg-generate-btn" onClick={handleGenerate} disabled={loading}>
-        {loading ? 'Generating...' : 'Generate All Routines →'}
-      </button>
+     <button className="rg-generate-btn" onClick={handleGenerate} disabled={loading}>
+  {loading ? (
+    <div className="rg-loader-micro" title="Generating routine...">
+      {[...Array(16)].map((_, i) => (
+        <div 
+          key={i}
+          className="rg-loader-slot"
+          style={{ 
+            animationDelay: `${(i % 4) * 0.15 + Math.floor(i / 4) * 0.1}s`,
+            // Alternate colors subtly
+            background: i % 3 === 0 ? 'rgba(255,255,255,0.35)' : 'rgba(255,255,255,0.25)'
+          }} 
+        />
+      ))}
+    </div>
+  ) : (
+    'Generate All Routines →'
+  )}
+</button>
 
       {/* Previews */}
       {previews.length > 0 && (

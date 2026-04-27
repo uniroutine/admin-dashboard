@@ -250,3 +250,32 @@
 .rg-cell-teacher { font-size: 10px; color: #6b7280; margin-top: 2px; }
 .rg-cell-lab-tag { font-size: 10px; color: #7c3aed; }
 .rg-preview-legend { font-size: 12px; color: #9ca3af; margin-top: 12px; }
+/* ─────────────────────────────────────────────
+   Minimal Pulsing Timetable Grid
+   ───────────────────────────────────────────── */
+.rg-loader-micro {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 3px;
+  width: 32px;
+  height: 32px;
+  margin: 0 auto;
+  padding: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  backdrop-filter: blur(2px);
+}
+
+.rg-loader-slot {
+  width: 4px;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.25);
+  border-radius: 1px;
+  animation: rg-slotGlow 1.4s infinite ease-in-out both;
+  will-change: opacity, transform;
+}
+
+@keyframes rg-slotGlow {
+  0%, 100% { opacity: 0.2; transform: scale(0.8); }
+  50% { opacity: 1; transform: scale(1.15); }
+}
