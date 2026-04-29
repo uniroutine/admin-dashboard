@@ -95,7 +95,7 @@ function checkTheoryFeasibility(subjectRow, grid, facultyMap, loadUsed) {
   
   const requiredLoad = required * 1.5;
   if (totalCapacity < requiredLoad) {
-    reasons.push(`Teacher capacity ${totalCapacity.toFixed(1)}hrs < required ${requiredLoad.toFixed(1)}hrs`);
+    reasons.push(`Teacher capacity ${totalCapacity.toFixed(1)} workload < required ${requiredLoad.toFixed(1)} workload`);
   }
   
   return {
