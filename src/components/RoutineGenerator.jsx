@@ -41,9 +41,7 @@ function teacherHasLoad(facultyData, teacherName, slotLoad, loadUsed, teacherId)
   return (remaining - used) >= slotLoad;
 }
 
-
 // FEATURE 1: Detect if routine is fresh or edited
-
 function isEditedRoutine(existingSlots) {
   for (const day of DAYS) {
     if (existingSlots[day] && Object.keys(existingSlots[day]).length > 0) {
@@ -53,14 +51,7 @@ function isEditedRoutine(existingSlots) {
   return false;
 }
 
-
 // FEATURE 2: Lightweight feasibility checking
-
-
-/**
- * Check if a theory subject can feasibly be placed
- * Returns: { feasible: boolean, reasons: string[] }
- */
 function checkTheoryFeasibility(subjectRow, grid, facultyMap, loadUsed) {
   const required = subjectRow.theoryPerWeek;
   const reasons = [];
@@ -115,10 +106,6 @@ function checkTheoryFeasibility(subjectRow, grid, facultyMap, loadUsed) {
   };
 }
 
-/**
- * Check if a lab subject can feasibly be placed
- * Returns: { feasible: boolean, reasons: string[] }
- */
 function checkLabFeasibility(subjectRow, grid, facultyMap, loadUsed) {
   const reasons = [];
   let validBlocks = 0;
@@ -179,22 +166,7 @@ function checkLabFeasibility(subjectRow, grid, facultyMap, loadUsed) {
   };
 }
 
-
-// Enhanced pickTeacher
-
-function pickTeacher(teacherOptions, facultyMap, day, period, slotLoad, loadUsed) {
-  for (const t of teacherOptions) {
-    const faculty = facultyMap[t.value] || { slots: {} };
-    if (isTeacherFree(faculty, day, period) && teacherHasLoad(faculty, t.label, slotLoad, loadUsed, t.value)) {
-      return t;
-    }
-  }
-  return null;
-}
-
-// ────────────────────────────────────────────────────────────────────────────
 // FEATURE 3: Structured failure reporting
-
 function createFailureReport(subject, type, feasibilityResult, placedCount = 0) {
   const report = {
     subject: subject.subjectName.replace(/^\[.*?\]\s*/, ''),
@@ -237,8 +209,30 @@ function formatFailureMessage(report) {
   return msg;
 }
 
-// ENHANCED GENERATE ROUTINE
+// UPDATED: pickTeacher now tries preferred teacher first, then falls back
+function pickTeacher(teacherOptions, facultyMap, day, period, slotLoad, loadUsed, preferredTeacher = null) {
+  // Try preferred first
+  if (preferredTeacher) {
+    const faculty = facultyMap[preferredTeacher.value] || { slots: {} };
+    if (
+      isTeacherFree(faculty, day, period) &&
+      teacherHasLoad(faculty, preferredTeacher.label, slotLoad, loadUsed, preferredTeacher.value)
+    ) {
+      return preferredTeacher;
+    }
+  }
+  // Fallback to others
+  for (const t of teacherOptions) {
+    if (preferredTeacher && t.value === preferredTeacher.value) continue;
+    const faculty = facultyMap[t.value] || { slots: {} };
+    if (isTeacherFree(faculty, day, period) && teacherHasLoad(faculty, t.label, slotLoad, loadUsed, t.value)) {
+      return t;
+    }
+  }
+  return null;
+}
 
+// ENHANCED GENERATE ROUTINE
 function generateRoutine(subjectRows, existingSlots, facultyMap, loadUsed) {
   const grid = {};
   DAYS.forEach(day => {
@@ -257,9 +251,7 @@ function generateRoutine(subjectRows, existingSlots, facultyMap, loadUsed) {
   const getPeriodOrder = () => isEdited ? [...ALL_PERIODS] : [...ALL_PERIODS].sort(() => Math.random() - 0.5);
   const getLabSlotOrder = () => isEdited ? [...ALL_LAB_SLOTS] : [...ALL_LAB_SLOTS].sort(() => Math.random() - 0.5);
 
-  
   // Step 1: Labs first
- 
   const labSubjects = subjectRows.filter(r => r.isLab);
   
   for (const lab of labSubjects) {
@@ -278,7 +270,8 @@ function generateRoutine(subjectRows, existingSlots, facultyMap, loadUsed) {
       for (const slots of getLabSlotOrder()) {
         if (!slots.every(p => !grid[day][p]?.occupied)) continue;
         
-        const teacher = pickTeacher(lab.teacherOptions, facultyMap, day, slots[0], 3.0, loadUsed);
+        // UPDATED: pass lab.preferredTeacher
+        const teacher = pickTeacher(lab.teacherOptions, facultyMap, day, slots[0], 3.0, loadUsed, lab.preferredTeacher);
         if (!teacher) continue;
         
         const allFree = slots.every(p => isTeacherFree(facultyMap[teacher.value] || { slots: {} }, day, p));
@@ -305,9 +298,7 @@ function generateRoutine(subjectRows, existingSlots, facultyMap, loadUsed) {
     }
   }
 
-  
   // Step 2: Theory
- 
   const theorySubjects = subjectRows.filter(r => !r.isLab);
   
   for (const theory of theorySubjects) {
@@ -343,7 +334,8 @@ function generateRoutine(subjectRows, existingSlots, facultyMap, loadUsed) {
           const lastP = lastPlacedPeriod[day];
           if (lastP && Math.abs(period - lastP) === 1) continue;
 
-          const teacher = pickTeacher(theory.teacherOptions, facultyMap, day, period, 1.5, loadUsed);
+          // UPDATED: pass theory.preferredTeacher
+          const teacher = pickTeacher(theory.teacherOptions, facultyMap, day, period, 1.5, loadUsed, theory.preferredTeacher);
           if (!teacher) continue;
 
           grid[day][period] = {
@@ -375,7 +367,6 @@ function generateRoutine(subjectRows, existingSlots, facultyMap, loadUsed) {
 }
 
 // REACT COMPONENT
-
 function RoutineGenerator() {
   const [allRoutines, setAllRoutines] = useState([]);
   const [allSubjects, setAllSubjects] = useState([]);
@@ -439,7 +430,8 @@ function RoutineGenerator() {
       subjectName: option.label,
       isLab,
       theoryPerWeek: isLab ? 0 : 2,
-      teacherOptions: teacherOpts
+      teacherOptions: teacherOpts,
+      preferredTeacher: null  // ← ADDED
     };
     setRoutineRows(prev => prev.map(r => r.id === rowId ? {
       ...r,
@@ -522,7 +514,6 @@ function RoutineGenerator() {
         }
 
         const { grid, failures } = generateRoutine(row.subjects, existingSlots, facultyMap, loadUsed);
-        
         const formattedFailures = failures.map(formatFailureMessage);
         
         results.push({
@@ -581,7 +572,10 @@ function RoutineGenerator() {
                 {row.subjects.map(sub => (
                   <div key={sub.id}
                     className={`rg-chip ${sub.isLab ? 'lab' : 'theory'} ${row.activeChip === sub.id ? 'active' : ''}`}
-                    onClick={() => updateRoutineRow(row.id, { activeChip: row.activeChip === sub.id ? null : sub.id, subjectPickerOpen: false })}>
+                    onClick={() => updateRoutineRow(row.id, {
+                      activeChip: row.activeChip === sub.id ? null : sub.id,
+                      subjectPickerOpen: false
+                    })}>
                     {sub.subjectName.replace(/^\[.*?\]\s*/, '')}
                     {sub.isLab && <span className="rg-lab-badge">LAB</span>}
                     <button className="rg-chip-x"
@@ -626,8 +620,20 @@ function RoutineGenerator() {
                     </div>
                   )}
 
+                  {/* UPDATED: Preferred Teacher selector replaces old teacher info line */}
+                  <div className="rg-field" style={{ marginTop: '12px' }}>
+                    <label className="rg-inline-label">Preferred Teacher (optional):</label>
+                    <Select
+                      options={[{ value: null, label: 'No preference' }, ...activeSubject.teacherOptions]}
+                      value={activeSubject.preferredTeacher || { value: null, label: 'No preference' }}
+                      onChange={(opt) => updateSubject(row.id, activeSubject.id, {
+                        preferredTeacher: opt?.value ? opt : null
+                      })}
+                      placeholder="No preference..."
+                    />
+                  </div>
                   <div className="rg-panel-teacher-info">
-                    {activeSubject.teacherOptions.length} teacher(s) available — auto-selected during generation.
+                    {activeSubject.teacherOptions.length} teacher(s) available as fallback.
                   </div>
                 </div>
               )}
@@ -644,13 +650,13 @@ function RoutineGenerator() {
         {loading ? (
           <div className="rg-loader-micro" title="Generating routine...">
             {[...Array(16)].map((_, i) => (
-              <div 
+              <div
                 key={i}
                 className="rg-loader-slot"
-                style={{ 
+                style={{
                   animationDelay: `${(i % 4) * 0.15 + Math.floor(i / 4) * 0.1}s`,
                   background: i % 3 === 0 ? 'rgba(255,255,255,0.35)' : 'rgba(255,255,255,0.25)'
-                }} 
+                }}
               />
             ))}
           </div>
