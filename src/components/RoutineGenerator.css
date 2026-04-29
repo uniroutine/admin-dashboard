@@ -279,3 +279,58 @@
   0%, 100% { opacity: 0.2; transform: scale(0.8); }
   50% { opacity: 1; transform: scale(1.15); }
 }
+
+/* NEW CLASSES FOR ENHANCED FEATURES */
+/* ────────────────────────────────────────────────────────────────────────── */
+
+/* Subject picker wrapper */
+.rg-subject-picker-wrapper {
+  min-width: 220px;
+}
+
+/* Panel styles */
+.rg-panel-lab-note {
+  font-size: 13px;
+  color: #6b7280;
+  margin: 0;
+}
+
+.rg-inline-label {
+  font-size: 14px;
+  color: #374151;
+}
+
+.rg-panel-teacher-info {
+  font-size: 12px;
+  color: #9ca3af;
+  margin-top: 8px;
+}
+
+/* Edited routine badge */
+.rg-edited-badge {
+  margin-left: 8px;
+  font-size: 12px;
+  color: #f59e0b;
+  background: #fef3c7;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-weight: 600;
+}
+
+/* Failures container */
+.rg-failures-container {
+  margin-bottom: 12px;
+}
+
+.rg-fail {
+  white-space: pre-wrap;
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  background: #fef2f2;
+  border-left: 3px solid #ef4444;
+  padding: 8px 12px;
+  margin-bottom: 6px;
+  border-radius: 4px;
+  color: #991b1b;
+}
