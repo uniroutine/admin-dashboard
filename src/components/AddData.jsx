@@ -10,7 +10,7 @@ import {
     getDoc
 } from "firebase/firestore";
 import "./AddData.css";
-
+import Select from 'react-select';
 export default function AddData() {
     // --- Subjects ---
     const [subjectCode, setSubjectCode] = useState("");
@@ -37,6 +37,12 @@ export default function AddData() {
     const [saving, setSaving] = useState(false);
     const [loadingSubjects, setLoadingSubjects] = useState(false);
     const [loadingRoutines, setLoadingRoutines] = useState(false);
+
+// --- for teacher link to multiple subjects ---
+    const [assignTeacher, setAssignTeacher] = useState(null);
+const [assignSubject, setAssignSubject] = useState("");
+const [allTeachers, setAllTeachers] = useState([]);
+const [loadingTeachers, setLoadingTeachers] = useState(false);
 
     // -----------------------
     // Helpers
@@ -77,12 +83,63 @@ export default function AddData() {
             setLoadingRoutines(false);
         }
     };
+    const loadAllTeachers = async () => {
+    setLoadingTeachers(true);
+    try {
+        const snap = await getDocs(collection(db, "Faculty_Routine"));
+        const teachers = snap.docs.map(d => ({
+            id: d.id,
+            name: d.data().teacherName || d.id
+        }));
+        setAllTeachers(teachers.sort((a, b) => a.name.localeCompare(b.name)));
+    } catch (err) {
+        setStatus("Failed to load teachers: " + simpleErr(err));
+    } finally {
+        setLoadingTeachers(false);
+    }
+};
 
     useEffect(() => {
         loadSubjects();
         loadRoutines();
+        loadAllTeachers(); 
     }, []);
 
+
+ const handleAssignTeacher = async (e) => {
+    e?.preventDefault();
+    if (!assignTeacher) return setStatus("Select a teacher.");
+    if (!assignSubject) return setStatus("Select a subject.");
+    if (!isSignedIn()) return setStatus("You must be signed in.");
+
+    setSaving(true);
+    setStatus("");
+    try {
+        // Check if teacher already assigned to this subject
+        const teachersRef = collection(db, "subjects", assignSubject, "teachers");
+        const existingSnap = await getDocs(teachersRef);
+        const alreadyExists = existingSnap.docs.some(d => d.id === assignTeacher.value);
+
+        if (alreadyExists) {
+            setStatus(`${assignTeacher.label} is already assigned to this subject.`);
+            return;
+        }
+
+        // Use setDoc with same teacher ID
+        await setDoc(
+            doc(db, "subjects", assignSubject, "teachers", assignTeacher.value),
+            { name: assignTeacher.label }
+        );
+
+        setStatus(`✓ ${assignTeacher.label} assigned to ${assignSubject}.`);
+        setAssignTeacher(null);
+        setAssignSubject("");
+    } catch (err) {
+        setStatus("Error assigning teacher: " + simpleErr(err));
+    } finally {
+        setSaving(false);
+    }
+};
     // -----------------------
     // Subject handlers
     // -----------------------
@@ -401,6 +458,42 @@ export default function AddData() {
                         <button type="submit" disabled={saving}>Set Routine Name</button>
                     </form>
                 </section>
+
+
+                {/* Column 4: Assign Teacher to Subject */}
+<section className="card column">
+    <h3>Assign Teacher to Subject</h3>
+    <form onSubmit={handleAssignTeacher} className="form-stack">
+        <label>Select Teacher</label>
+        <Select
+            options={allTeachers.map(t => ({ value: t.id, label: t.name }))}
+            value={assignTeacher}
+            onChange={setAssignTeacher}
+            isLoading={loadingTeachers}
+            placeholder="Select teacher..."
+            isClearable
+        />
+
+        <label>Select Subject</label>
+        <select
+            value={assignSubject}
+            onChange={e => setAssignSubject(e.target.value)}
+            disabled={loadingSubjects}
+        >
+            <option value="">-- choose subject --</option>
+            {allSubjects.map(s => (
+                <option key={s.id} value={s.id}>
+                    {s.id}{s.name ? ` — ${s.name}` : ""}
+                </option>
+            ))}
+        </select>
+
+        <button type="submit" disabled={saving}>Assign Teacher</button>
+    </form>
+    <div className="note">
+        Teacher will be linked using their existing ID — no duplicates created.
+    </div>
+</section>
             </div>
 
             <div className="status-bar">{status}</div>
