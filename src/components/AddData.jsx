@@ -1,11 +1,13 @@
 import React, { useEffect, useState } from "react";
 import { db, auth } from "../firebase";
+
 import {
     collection,
     doc,
     setDoc,
     addDoc,
-    getDocs
+    getDocs,
+    getDoc
 } from "firebase/firestore";
 import "./AddData.css";
 
@@ -111,27 +113,49 @@ export default function AddData() {
     // Teacher handlers
     // -----------------------
     const handleTeacherSave = async (e) => {
-        e?.preventDefault();
-        if (!teacherSubject) return setStatus("Choose a subject for the teacher.");
-        const tname = teacherName.trim();
-        if (!tname) return setStatus("Teacher name required.");
-        if (!isSignedIn()) return setStatus("You must be signed in to add teachers.");
+    e?.preventDefault();
+    if (!teacherSubject) return setStatus("Choose a subject for the teacher.");
+    const tname = teacherName.trim();
+    if (!tname) return setStatus("Teacher name required.");
+    if (!isSignedIn()) return setStatus("You must be signed in to add teachers.");
 
-        setSaving(true);
-        setStatus("");
-        try {
-            const fullName = `${teacherDesignation} ${tname}`; // ← designation prepended
-            const teachersRef = collection(db, "subjects", teacherSubject, "teachers");
-            await addDoc(teachersRef, { name: fullName });
-            setStatus(`Teacher '${fullName}' added to ${teacherSubject}.`);
-            setTeacherName("");
-            await loadSubjects();
-        } catch (err) {
-            setStatus("Error adding teacher: " + simpleErr(err));
-        } finally {
-            setSaving(false);
+    setSaving(true);
+    setStatus("");
+    try {
+        const fullName = `${teacherDesignation} ${tname}`;
+
+        // Step 1: Add to subjects — capture the generated ID
+        const teachersRef = collection(db, "subjects", teacherSubject, "teachers");
+        const newDoc = await addDoc(teachersRef, { name: fullName });
+        const teacherId = newDoc.id;
+
+        // Step 2: Register in Faculty_Routine with SAME ID — only if not already there
+        const facultyRef = doc(db, "Faculty_Routine", teacherId);
+        const facultySnap = await getDoc(facultyRef);
+        if (!facultySnap.exists()) {
+            // Detect limit from name using existing regex logic
+            const n = fullName.toLowerCase();
+            const limit = n.includes('asst.') || n.includes('assistant') ? 24
+                        : n.includes('assoc.') || n.includes('associate') ? 12
+                        : n.includes('prof.') || n.includes('professor') ? 8
+                        : 12;
+
+            await setDoc(facultyRef, {
+                teacherName: fullName,
+                maxLoad: limit,
+                remainingLoad: limit
+            });
         }
-    };
+
+        setStatus(`Teacher '${fullName}' added and registered.`);
+        setTeacherName("");
+        await loadSubjects();
+    } catch (err) {
+        setStatus("Error adding teacher: " + simpleErr(err));
+    } finally {
+        setSaving(false);
+    }
+};
 
     // -----------------------
     // Routine handlers
@@ -210,59 +234,88 @@ export default function AddData() {
         }
     };
 
-    const handleExcelImport = async () => {
-        if (!excelFile) return setStatus("Select an Excel file first.");
-        setSaving(true);
-        setStatus("Importing...");
-        try {
-            const ExcelJS = await import("exceljs");
-            const wb = new ExcelJS.Workbook();
-            const buffer = await excelFile.arrayBuffer();
-            await wb.xlsx.load(buffer);
-            const ws = wb.worksheets[0];
-            if (!ws) throw new Error("No worksheet found");
+   const handleExcelImport = async () => {
+    if (!excelFile) return setStatus("Select an Excel file first.");
+    if (!isSignedIn()) return setStatus("You must be signed in to import data.");
+    
+    setSaving(true);
+    setStatus("Importing...");
+    try {
+        const ExcelJS = await import("exceljs");
+        const wb = new ExcelJS.Workbook();
+        const buffer = await excelFile.arrayBuffer();
+        await wb.xlsx.load(buffer);
+        const ws = wb.worksheets[0];
+        if (!ws) throw new Error("No worksheet found");
 
-            const header = [];
-            ws.getRow(1).eachCell((cell, colNumber) => {
-                header[colNumber - 1] = String(cell.value || "").toLowerCase().trim();
-            });
-            const codeIdx = header.findIndex(h => h.includes("code")) + 1;
-            const nameIdx = header.findIndex(h => h.includes("subject") || h.includes("name")) + 1;
-            const teacherIdx = header.findIndex(h => h.includes("teacher")) + 1;
-            if (!codeIdx || !nameIdx) throw new Error("Excel must include Subject Code and Subject Name columns");
+        const header = [];
+        ws.getRow(1).eachCell((cell, colNumber) => {
+            header[colNumber - 1] = String(cell.value || "").toLowerCase().trim();
+        });
 
-            const rows = [];
-            ws.eachRow((row, rowNumber) => {
-                if (rowNumber === 1) return;
-                const code = String(row.getCell(codeIdx).value || "").trim();
-                const name = String(row.getCell(nameIdx).value || "").trim();
-                const teacher = teacherIdx ? String(row.getCell(teacherIdx).value || "").trim() : "";
-                if (code && name) rows.push({ code, name, teacher, rowNumber });
-            });
+        // Fixed header detection
+        const codeIdx = header.findIndex(h => h === "subject code" || h === "code") + 1;
+        const nameIdx = header.findIndex(h => h === "subject name" || (h.includes("name") && !h.includes("code"))) + 1;
+        const teacherIdx = header.findIndex(h => h === "teacher name" || h === "teacher") + 1;
 
-            let success = 0, failed = 0;
-            for (const r of rows) {
+        if (!codeIdx || !nameIdx) throw new Error("Excel must include Subject Code and Subject Name columns");
+
+        // Deduplicate in-memory first
+        const subjectMap = new Map(); // code -> name
+        const teacherSetMap = new Map(); // code -> Set of teacher names
+
+        ws.eachRow((row, rowNumber) => {
+            if (rowNumber === 1) return;
+            const code = String(row.getCell(codeIdx).value || "").trim();
+            const name = String(row.getCell(nameIdx).value || "").trim();
+            const teacher = teacherIdx ? String(row.getCell(teacherIdx).value || "").trim() : "";
+            if (!code || !name) return;
+
+            if (!subjectMap.has(code)) subjectMap.set(code, name);
+            if (teacher) {
+                if (!teacherSetMap.has(code)) teacherSetMap.set(code, new Set());
+                teacherSetMap.get(code).add(teacher);
+            }
+        });
+
+        let success = 0, failed = 0, teacherSuccess = 0, teacherSkipped = 0;
+
+        for (const [code, name] of subjectMap) {
+            try {
+                await setDoc(doc(db, "subjects", code), { name }, { merge: true });
+                success++;
+            } catch (err) {
+                failed++;
+            }
+        }
+
+        for (const [code, teachers] of teacherSetMap) {
+            const teachersRef = collection(db, "subjects", code, "teachers");
+            // Check what already exists in Firestore
+            const existingSnap = await getDocs(teachersRef);
+            const existing = new Set(existingSnap.docs.map(d => d.data().name));
+
+            for (const teacher of teachers) {
+                if (existing.has(teacher)) { teacherSkipped++; continue; }
                 try {
-                    await setDoc(doc(db, "subjects", r.code), { name: r.name }, { merge: true });
-                    if (r.teacher) {
-                        await addDoc(collection(db, "subjects", r.code, "teachers"), { name: r.teacher });
-                    }
-                    success++;
+                    await addDoc(teachersRef, { name: teacher });
+                    teacherSuccess++;
                 } catch (err) {
                     failed++;
-                    console.error("Import row failed:", r.rowNumber, err);
                 }
             }
-            await loadSubjects();
-            setStatus(`Import finished: ${success} ok, ${failed} failed`);
-            setExcelFile(null);
-            setExcelPreviewCount(null);
-        } catch (err) {
-            setStatus("Excel import error: " + simpleErr(err));
-        } finally {
-            setSaving(false);
         }
-    };
+
+        await loadSubjects();
+        setStatus(`Import done: ${success} subjects, ${teacherSuccess} teachers added, ${teacherSkipped} skipped (duplicates)`);
+        setExcelFile(null);
+        setExcelPreviewCount(null);
+    } catch (err) {
+        setStatus("Excel import error: " + simpleErr(err));
+    } finally {
+        setSaving(false);
+    }
+};
 
     // -----------------------
     // Render
