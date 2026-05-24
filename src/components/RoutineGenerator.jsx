@@ -522,6 +522,7 @@ function RoutineGenerator() {
     }
   };
 
+  // ── SAVE ALL ROUTINES (FIXED) ──────────────────────────────────
   const handleSaveAll = async () => {
     if (previews.length === 0) return;
     setSaving(true);
@@ -537,20 +538,33 @@ function RoutineGenerator() {
             
             const dayKey = day;
             const slotId = `${dayKey}_${period}`;
+            const routineDocRef = doc(db, 'routines', preview.routineId, dayKey, String(period));
             
-            await setDoc(
-              doc(db, 'routines', preview.routineId, dayKey, String(period)),
-              {
-                sname: cell.subjectName,
-                scode: cell.subjectCode,
-                tname: cell.teacherName,
-                tid: cell.teacherId,
-                isLab: cell.isLab,
-                load: cell.load
-              },
-              { merge: true }
-            );
+            // Check if this slot already has a different teacher (for load restoration)
+            const existingRoutineSnap = await getDocs(collection(db, 'routines', preview.routineId, dayKey));
+            const existingSlotData = existingRoutineSnap.docs.find(d => d.id === String(period));
+            let previousTeacherId = null;
+            let previousLoad = 0;
             
+            if (existingSlotData?.exists()) {
+              const data = existingSlotData.data();
+              if (data.tid && data.tid !== cell.teacherId) {
+                previousTeacherId = data.tid;
+                previousLoad = data.load || (data.isLab ? 1.0 : 1.5);
+              }
+            }
+            
+            // Save to routine
+            await setDoc(routineDocRef, {
+              sname: cell.subjectName,
+              scode: cell.subjectCode,
+              tname: cell.teacherName,
+              tid: cell.teacherId,
+              isLab: cell.isLab,
+              load: cell.load
+            }, { merge: true });
+            
+            // Save to Faculty_Routine slot
             await setDoc(
               doc(db, 'Faculty_Routine', cell.teacherId, 'slots', slotId),
               {
@@ -560,29 +574,69 @@ function RoutineGenerator() {
                 subjectCode: cell.subjectCode,
                 isLab: cell.isLab,
                 period: period,
-                day: dayKey
+                day: dayKey,
+                load: cell.load
               },
               { merge: true }
             );
             
+            // Update teacher's remainingLoad
             const teacherRef = doc(db, 'Faculty_Routine', cell.teacherId);
             const teacherSnap = await getDoc(teacherRef);
-            const limit = getDesignationLimit(cell.teacherName);
-            const currentLoad = teacherSnap.exists() ? teacherSnap.data().remainingLoad ?? limit : limit;
-            const newLoad = Math.max(0, currentLoad - cell.load);
             
-            await setDoc(teacherRef, {
-              teacherName: cell.teacherName,
-              maxLoad: limit,
-              remainingLoad: Number(newLoad.toFixed(2))
-            }, { merge: true });
+            if (teacherSnap.exists()) {
+              const teacherData = teacherSnap.data();
+              const limit = getDesignationLimit(cell.teacherName);
+              const currentRemaining = teacherData.remainingLoad ?? limit;
+              
+              // Check if this slot already exists for this teacher
+              const existingSlotSnap = await getDoc(doc(db, 'Faculty_Routine', cell.teacherId, 'slots', slotId));
+              const isNewSlot = !existingSlotSnap.exists() || !existingSlotSnap.data().routineId;
+              
+              if (isNewSlot) {
+                const newRemaining = Math.max(0, currentRemaining - cell.load);
+                await setDoc(teacherRef, {
+                  teacherName: cell.teacherName,
+                  maxLoad: limit,
+                  remainingLoad: Number(newRemaining.toFixed(2))
+                }, { merge: true });
+              }
+            } else {
+              // Teacher doesn't exist yet - create with initial load
+              await setDoc(teacherRef, {
+                teacherName: cell.teacherName,
+                maxLoad: getDesignationLimit(cell.teacherName).limit,
+                remainingLoad: Number((getDesignationLimit(cell.teacherName).limit - cell.load).toFixed(2))
+              }, { merge: true });
+            }
+            
+            // Restore load for PREVIOUS teacher if we replaced their slot
+            if (previousTeacherId) {
+              const prevTeacherRef = doc(db, 'Faculty_Routine', previousTeacherId);
+              const prevTeacherSnap = await getDoc(prevTeacherRef);
+              
+              if (prevTeacherSnap.exists()) {
+                const prevData = prevTeacherSnap.data();
+                const prevLimit = getDesignationLimit(cell.teacherName);
+                const prevCurrentRemaining = prevData.remainingLoad ?? prevLimit.limit;
+                const restoredRemaining = Math.min(prevLimit.limit, prevCurrentRemaining + previousLoad);
+                
+                await setDoc(prevTeacherRef, {
+                  teacherName: prevData.teacherName,
+                  maxLoad: prevLimit.limit,
+                  remainingLoad: Number(restoredRemaining.toFixed(2))
+                }, { merge: true });
+              }
+            }
           }
         }
       }
       
       alert('✅ All routines saved successfully!');
+      setPreviews([]); // Clear previews after successful save
     } catch (err) {
       setError('❌ Save failed: ' + err.message);
+      console.error('Save error:', err);
     } finally {
       setSaving(false);
     }
@@ -656,7 +710,7 @@ function RoutineGenerator() {
               {activeSubject && (
                 <div className="rg-panel">
                   <div className="rg-panel-title">
-                    ⚙ {activeSubject.subjectName.replace(/^\[.*?\]\s*/, '')}
+                    &activeSubject.subjectName.replace(/^\[.*?\]\s*/, '')
                     {activeSubject.isLab && <span className="rg-lab-badge">LAB</span>}
                   </div>
 
@@ -725,7 +779,6 @@ function RoutineGenerator() {
             className="rg-save-btn" 
             onClick={handleSaveAll} 
             disabled={saving}
-            style={{ marginTop: '12px' }}
           >
             {saving ? '💾 Saving...' : '💾 Save All Routines'}
           </button>
