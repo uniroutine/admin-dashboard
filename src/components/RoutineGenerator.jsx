@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import Select from 'react-select';
 import { db } from '../firebase';
-import { collection, getDocs, doc, getDoc } from 'firebase/firestore';
+import { collection, getDocs, doc, getDoc, setDoc } from 'firebase/firestore';
 import './RoutineGenerator.css';
 
 const isLabSubject = (name = '') => /\blab\b|\blaboratory\b/i.test(name);
@@ -41,7 +41,6 @@ function teacherHasLoad(facultyData, teacherName, slotLoad, loadUsed, teacherId)
   return (remaining - used) >= slotLoad;
 }
 
-// FEATURE 1: Detect if routine is fresh or edited
 function isEditedRoutine(existingSlots) {
   for (const day of DAYS) {
     if (existingSlots[day] && Object.keys(existingSlots[day]).length > 0) {
@@ -51,7 +50,6 @@ function isEditedRoutine(existingSlots) {
   return false;
 }
 
-// FEATURE 2: Lightweight feasibility checking
 function checkTheoryFeasibility(subjectRow, grid, facultyMap, loadUsed) {
   const required = subjectRow.theoryPerWeek;
   const reasons = [];
@@ -166,7 +164,6 @@ function checkLabFeasibility(subjectRow, grid, facultyMap, loadUsed) {
   };
 }
 
-// FEATURE 3: Structured failure reporting
 function createFailureReport(subject, type, feasibilityResult, placedCount = 0) {
   const report = {
     subject: subject.subjectName.replace(/^\[.*?\]\s*/, ''),
@@ -209,9 +206,7 @@ function formatFailureMessage(report) {
   return msg;
 }
 
-// UPDATED: pickTeacher now tries preferred teacher first, then falls back
 function pickTeacher(teacherOptions, facultyMap, day, period, slotLoad, loadUsed, preferredTeacher = null) {
-  // Try preferred first
   if (preferredTeacher) {
     const faculty = facultyMap[preferredTeacher.value] || { slots: {} };
     if (
@@ -221,7 +216,6 @@ function pickTeacher(teacherOptions, facultyMap, day, period, slotLoad, loadUsed
       return preferredTeacher;
     }
   }
-  // Fallback to others
   for (const t of teacherOptions) {
     if (preferredTeacher && t.value === preferredTeacher.value) continue;
     const faculty = facultyMap[t.value] || { slots: {} };
@@ -232,7 +226,6 @@ function pickTeacher(teacherOptions, facultyMap, day, period, slotLoad, loadUsed
   return null;
 }
 
-// ENHANCED GENERATE ROUTINE
 function generateRoutine(subjectRows, existingSlots, facultyMap, loadUsed) {
   const grid = {};
   DAYS.forEach(day => {
@@ -251,7 +244,6 @@ function generateRoutine(subjectRows, existingSlots, facultyMap, loadUsed) {
   const getPeriodOrder = () => isEdited ? [...ALL_PERIODS] : [...ALL_PERIODS].sort(() => Math.random() - 0.5);
   const getLabSlotOrder = () => isEdited ? [...ALL_LAB_SLOTS] : [...ALL_LAB_SLOTS].sort(() => Math.random() - 0.5);
 
-  // Step 1: Labs first
   const labSubjects = subjectRows.filter(r => r.isLab);
   
   for (const lab of labSubjects) {
@@ -270,7 +262,6 @@ function generateRoutine(subjectRows, existingSlots, facultyMap, loadUsed) {
       for (const slots of getLabSlotOrder()) {
         if (!slots.every(p => !grid[day][p]?.occupied)) continue;
         
-        // UPDATED: pass lab.preferredTeacher
         const teacher = pickTeacher(lab.teacherOptions, facultyMap, day, slots[0], 3.0, loadUsed, lab.preferredTeacher);
         if (!teacher) continue;
         
@@ -298,7 +289,6 @@ function generateRoutine(subjectRows, existingSlots, facultyMap, loadUsed) {
     }
   }
 
-  // Step 2: Theory
   const theorySubjects = subjectRows.filter(r => !r.isLab);
   
   for (const theory of theorySubjects) {
@@ -334,7 +324,6 @@ function generateRoutine(subjectRows, existingSlots, facultyMap, loadUsed) {
           const lastP = lastPlacedPeriod[day];
           if (lastP && Math.abs(period - lastP) === 1) continue;
 
-          // UPDATED: pass theory.preferredTeacher
           const teacher = pickTeacher(theory.teacherOptions, facultyMap, day, period, 1.5, loadUsed, theory.preferredTeacher);
           if (!teacher) continue;
 
@@ -366,7 +355,6 @@ function generateRoutine(subjectRows, existingSlots, facultyMap, loadUsed) {
   return { grid, failures };
 }
 
-// REACT COMPONENT
 function RoutineGenerator() {
   const [allRoutines, setAllRoutines] = useState([]);
   const [allSubjects, setAllSubjects] = useState([]);
@@ -375,6 +363,7 @@ function RoutineGenerator() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [previews, setPreviews] = useState([]);
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     const load = async () => {
@@ -431,7 +420,7 @@ function RoutineGenerator() {
       isLab,
       theoryPerWeek: isLab ? 0 : 2,
       teacherOptions: teacherOpts,
-      preferredTeacher: null  // ← ADDED
+      preferredTeacher: null
     };
     setRoutineRows(prev => prev.map(r => r.id === rowId ? {
       ...r,
@@ -533,6 +522,72 @@ function RoutineGenerator() {
     }
   };
 
+  const handleSaveAll = async () => {
+    if (previews.length === 0) return;
+    setSaving(true);
+    setError('');
+
+    try {
+      for (const preview of previews) {
+        for (const day of DAYS) {
+          for (const period of ALL_PERIODS) {
+            const cell = preview.grid[day]?.[period];
+            
+            if (!cell?.occupied || cell.existing) continue;
+            
+            const dayKey = day;
+            const slotId = `${dayKey}_${period}`;
+            
+            await setDoc(
+              doc(db, 'routines', preview.routineId, dayKey, String(period)),
+              {
+                sname: cell.subjectName,
+                scode: cell.subjectCode,
+                tname: cell.teacherName,
+                tid: cell.teacherId,
+                isLab: cell.isLab,
+                load: cell.load
+              },
+              { merge: true }
+            );
+            
+            await setDoc(
+              doc(db, 'Faculty_Routine', cell.teacherId, 'slots', slotId),
+              {
+                routineId: preview.routineId,
+                routineName: preview.routineName,
+                subjectName: cell.subjectName,
+                subjectCode: cell.subjectCode,
+                isLab: cell.isLab,
+                period: period,
+                day: dayKey
+              },
+              { merge: true }
+            );
+            
+            const teacherRef = doc(db, 'Faculty_Routine', cell.teacherId);
+            const teacherSnap = await getDoc(teacherRef);
+            const limit = getDesignationLimit(cell.teacherName);
+            const currentLoad = teacherSnap.exists() ? teacherSnap.data().remainingLoad ?? limit : limit;
+            const newLoad = Math.max(0, currentLoad - cell.load);
+            
+            await setDoc(teacherRef, {
+              teacherName: cell.teacherName,
+              maxLoad: limit,
+              remainingLoad: Number(newLoad.toFixed(2))
+            }, { merge: true });
+          }
+        }
+      }
+      
+      alert('✅ All routines saved successfully!');
+    } catch (err) {
+      setError('❌ Save failed: ' + err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <div className="rg-page">
       <h2 className="rg-title">Routine Generator</h2>
@@ -620,7 +675,6 @@ function RoutineGenerator() {
                     </div>
                   )}
 
-                  {/* UPDATED: Preferred Teacher selector replaces old teacher info line */}
                   <div className="rg-field" style={{ marginTop: '12px' }}>
                     <label className="rg-inline-label">Preferred Teacher (optional):</label>
                     <Select
@@ -666,66 +720,77 @@ function RoutineGenerator() {
       </button>
 
       {previews.length > 0 && (
-        <div className="rg-preview-section">
-          <h3 className="rg-preview-title">Preview</h3>
-          {previews.map((preview) => (
-            <div key={preview.routineId} className="rg-preview-routine">
-              <div className="rg-preview-routine-name">
-                {preview.routineName}
-                {preview.isEdited && <span className="rg-edited-badge"> EDITED</span>}
-              </div>
+        <>
+          <button 
+            className="rg-save-btn" 
+            onClick={handleSaveAll} 
+            disabled={saving}
+            style={{ marginTop: '12px' }}
+          >
+            {saving ? '💾 Saving...' : '💾 Save All Routines'}
+          </button>
 
-              {preview.failures.length > 0 && (
-                <div className="rg-failures-container">
-                  {preview.failures.map((f, i) => (
-                    <div key={i} className="rg-fail">{f}</div>
-                  ))}
+          <div className="rg-preview-section">
+            <h3 className="rg-preview-title">Preview</h3>
+            {previews.map((preview) => (
+              <div key={preview.routineId} className="rg-preview-routine">
+                <div className="rg-preview-routine-name">
+                  {preview.routineName}
+                  {preview.isEdited && <span className="rg-edited-badge"> EDITED</span>}
                 </div>
-              )}
 
-              <div className="rg-table-wrapper">
-                <table className="rg-table">
-                  <thead>
-                    <tr>
-                      <th>Day / Time</th>
-                      {TIME_SLOTS.map((slot, i) => (
-                        <th key={i} className={slot.isLunch ? 'lunch' : ''}>{slot.time}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {DAYS.map(day => (
-                      <tr key={day}>
-                        <td className="day-col">{DAY_LABELS[day]}</td>
-                        {TIME_SLOTS.map((slot, i) => {
-                          if (slot.isLunch) return <td key={i} className="lunch-col">Lunch</td>;
-                          const cell = preview.grid[day]?.[slot.period];
-                          if (!cell?.occupied) return <td key={i} className="empty-col">—</td>;
-                          if (cell.existing) return (
-                            <td key={i} className="existing-col">
-                              <div className="rg-cell-subject existing">{cell.data?.sname || 'Existing'}</div>
-                              <div className="rg-cell-teacher">{cell.data?.tname || ''}</div>
-                            </td>
-                          );
-                          return (
-                            <td key={i} className={cell.isLab ? 'lab-col' : 'theory-col'}>
-                              <div className={`rg-cell-subject ${cell.isLab ? 'lab' : 'theory'}`}>
-                                {cell.subjectName}
-                              </div>
-                              <div className="rg-cell-teacher">{cell.teacherName}</div>
-                              {cell.isLab && <div className="rg-cell-lab-tag">LAB</div>}
-                            </td>
-                          );
-                        })}
-                      </tr>
+                {preview.failures.length > 0 && (
+                  <div className="rg-failures-container">
+                    {preview.failures.map((f, i) => (
+                      <div key={i} className="rg-fail">{f}</div>
                     ))}
-                  </tbody>
-                </table>
+                  </div>
+                )}
+
+                <div className="rg-table-wrapper">
+                  <table className="rg-table">
+                    <thead>
+                      <tr>
+                        <th>Day / Time</th>
+                        {TIME_SLOTS.map((slot, i) => (
+                          <th key={i} className={slot.isLunch ? 'lunch' : ''}>{slot.time}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {DAYS.map(day => (
+                        <tr key={day}>
+                          <td className="day-col">{DAY_LABELS[day]}</td>
+                          {TIME_SLOTS.map((slot, i) => {
+                            if (slot.isLunch) return <td key={i} className="lunch-col">Lunch</td>;
+                            const cell = preview.grid[day]?.[slot.period];
+                            if (!cell?.occupied) return <td key={i} className="empty-col">—</td>;
+                            if (cell.existing) return (
+                              <td key={i} className="existing-col">
+                                <div className="rg-cell-subject existing">{cell.data?.sname || 'Existing'}</div>
+                                <div className="rg-cell-teacher">{cell.data?.tname || ''}</div>
+                              </td>
+                            );
+                            return (
+                              <td key={i} className={cell.isLab ? 'lab-col' : 'theory-col'}>
+                                <div className={`rg-cell-subject ${cell.isLab ? 'lab' : 'theory'}`}>
+                                  {cell.subjectName}
+                                </div>
+                                <div className="rg-cell-teacher">{cell.teacherName}</div>
+                                {cell.isLab && <div className="rg-cell-lab-tag">LAB</div>}
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <p className="rg-preview-legend">🟦 Theory &nbsp; 🟣 Lab &nbsp; 🟩 Existing</p>
               </div>
-              <p className="rg-preview-legend">🟦 Theory &nbsp; 🟣 Lab &nbsp; 🟩 Existing</p>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        </>
       )}
     </div>
   );

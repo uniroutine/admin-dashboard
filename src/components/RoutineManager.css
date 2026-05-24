@@ -59,3 +59,58 @@
   box-shadow: 0 10px 30px rgba(255,77,77,0.18);
   outline: none;
 }
+/* ── Save bar & button ─────────────────────────────────────────── */
+.rg-save-bar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: 28px;
+  padding: 16px 0 4px;
+  border-top: 1px solid #e2e8f0;
+}
+
+.rg-save-btn {
+  padding: 12px 32px;
+  background: #22c55e;
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s, opacity 0.2s;
+}
+
+.rg-save-btn:hover:not(:disabled) {
+  background: #16a34a;
+}
+
+.rg-save-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.rg-save-summary {
+  font-size: 0.9rem;
+  color: #475569;
+  font-weight: 500;
+}
+
+/* ── Per-routine save badge ────────────────────────────────────── */
+.rg-save-badge {
+  font-size: 0.78rem;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 4px;
+  margin-left: 8px;
+}
+
+.rg-save-badge.success {
+  background: #dcfce7;
+  color: #16a34a;
+}
+
+.rg-save-badge.error {
+  background: #fee2e2;
+  color: #dc2626;
+}
