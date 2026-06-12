@@ -14,7 +14,6 @@ import RoutineManager from "./components/RoutineManager";
 import FacultyRoutine from "./components/FacultyRoutine";
 import AboutUs from "./components/AboutUs";
 import AddData from "./components/AddData";
-import Parameters from "./components/Parameters";
 
 // Auth
 import { useAuth } from "./contexts/AuthContext";
@@ -79,11 +78,10 @@ function AppRoutes() {
             <Route element={<RequireAuth />}>
               <Route path="/" element={<Home />} />
               <Route path="/add-data" element={<AddData />} />
-              <Route path="/parameters" element={<Parameters />} />
               <Route path="/edit-routine" element={<RoutineManager />} />
               <Route path="/faculty-routine" element={<FacultyRoutine />} />
-              <Route path="/about-us" element={<AboutUs />} />
               <Route path="/routine-generator" element={<RoutineGenerator />} />
+              <Route path="/about-us" element={<AboutUs />} />
             </Route>
 
             <Route
@@ -118,19 +116,16 @@ function MainNav({ onSignOut }) {
             <Link to="/add-data">Add Data</Link>
           </li>
           <li className="hideOnMobile">
-          <Link to="/parameters">Parameters</Link>
-          </li>
-          <li className="hideOnMobile">
             <Link to="/edit-routine">Student Routine</Link>
           </li>
           <li className="hideOnMobile">
-          <Link to="/faculty-routine">Faculty Routine</Link>
+            <Link to="/faculty-routine">Faculty Routine</Link>
+          </li>
+          <li className="hideOnMobile">
+            <Link to="/routine-generator">Generator</Link>
           </li>
           <li className="hideOnMobile">
             <Link to="/about-us">About Us</Link>
-          </li>
-          <li className="hideOnMobile">
-           <Link to="/routine-generator">Generator</Link>
           </li>
         </ul>
       </div>
@@ -162,20 +157,17 @@ function MainNav({ onSignOut }) {
           <Link to="/add-data" onClick={closeMenu}>
             Add Data
           </Link>
-          <Link to="/parameters" onClick={closeMenu}>
-          Parameters
-          </Link>
           <Link to="/edit-routine" onClick={closeMenu}>
             Student Routine
           </Link>
           <Link to="/faculty-routine" onClick={closeMenu}>
             Faculty Routine
           </Link>
+          <Link to="/routine-generator" onClick={closeMenu}>
+            Generator
+          </Link>
           <Link to="/about-us" onClick={closeMenu}>
             About Us
-          </Link>
-          <Link to="/routine-generator" onClick={closeMenu}>
-           Generator
           </Link>
           <button
             className="signout-btn"
