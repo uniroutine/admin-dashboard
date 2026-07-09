@@ -1,4 +1,3 @@
-// src/components/table.jsx
 import React, { useState, useEffect } from 'react';
 import Select from 'react-select';
 import { db } from '../firebase';
@@ -71,6 +70,27 @@ function RoutineTable({
     ? routineOptions.find(opt => opt.value === selectedRoutine.id) 
     : null;
 
+ // Calls YOUR Go backend — no API key, no proxy, no CORS workaround needed
+const sendPushifyNotification = async (routineName) => {
+  try {
+    const response = await fetch('http://localhost:8080/api/notify-students', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: 'Routine Updated',
+        description: `${routineName} has changed — please check the dashboard.`
+      })
+    });
+
+    if (!response.ok) {
+      console.warn('Backend rejected notification request:', response.status);
+      return;
+    }
+    console.log(`Notification triggered for ${routineName}`);
+  } catch (err) {
+    console.error('Failed to reach notification backend:', err);
+  }
+};
   // Single doc read — fast conflict check
   const checkTeacherConflictInDatabase = async (teacherId, day, period) => {
     if (!teacherId) return null;
@@ -345,16 +365,16 @@ function RoutineTable({
 
         // Write slot
         if (editData.teacherId) {
-           const facultySlotRef = doc(db, 'Faculty_Routine', editData.teacherId, 'slots', slotId);
-await setDoc(facultySlotRef, {
-  className: selectedRoutine.name || selectedRoutine.id,
-  day: dayKey,
-  period: period,
-  teacherName: editData.teacherName,
-  load: slotLoad,
-  subjectName: editData.subjectName,
-  subjectCode: editData.subjectCode
-});
+          const facultySlotRef = doc(db, 'Faculty_Routine', editData.teacherId, 'slots', slotId);
+          await setDoc(facultySlotRef, {
+            className: selectedRoutine.name || selectedRoutine.id,
+            day: dayKey,
+            period: period,
+            teacherName: editData.teacherName,
+            load: slotLoad,
+            subjectName: editData.subjectName,
+            subjectCode: editData.subjectCode
+          });
 
           // Update teacher parent doc load tracking
           const { limit } = getDesignationLimit(editData.teacherName);
@@ -384,6 +404,9 @@ await setDoc(facultySlotRef, {
       if (prevData?.teacherId !== editData.teacherId) {
         updateTeacherSchedule(selectedRoutine.id, dayIndex, timeSlot, editData.teacherId, prevData?.teacherId);
       }
+
+      // Fire push notification campaign asynchronously on success
+      sendPushifyNotification(selectedRoutine.name || selectedRoutine.id);
 
       setTimeout(() => { setActiveCell(null); setFeedbackMessage(null); }, 1500);
     } catch (err) {
@@ -430,6 +453,10 @@ await setDoc(facultySlotRef, {
       }
 
       setFeedbackMessage({ type: 'success', message: 'Cell cleared!' });
+      
+      // Fire push notification campaign asynchronously on clearing cell
+      sendPushifyNotification(selectedRoutine.name || selectedRoutine.id);
+
       setTimeout(() => { setActiveCell(null); setFeedbackMessage(null); }, 1500);
     } catch (err) {
       setFeedbackMessage({ type: 'error', message: `Failed to clear: ${err.message}` });
