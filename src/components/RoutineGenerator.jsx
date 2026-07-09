@@ -1,370 +1,40 @@
-// src/components/RoutineGenerator.jsx
 import React, { useState, useEffect } from 'react';
 import Select from 'react-select';
 import { db } from '../firebase';
 import { collection, getDocs, doc, getDoc, setDoc } from 'firebase/firestore';
+
+import { 
+  TIME_SLOTS, 
+  GENERATOR_DAYS, 
+  DAY_LABELS, 
+  ALL_PERIODS, 
+  isLabSubject, 
+  isEditedRoutine, 
+  getDesignationLimit 
+} from './routineUtils';
+
+import { generateRoutine, formatFailureMessage } from './routineAlgorithm';
 import './RoutineGenerator.css';
 
-const isLabSubject = (name = '') => /\blab\b|\blaboratory\b/i.test(name);
-const DAYS = ['mon', 'tue', 'wed', 'thu', 'fri'];
-const DAY_LABELS = { mon: 'Monday', tue: 'Tuesday', wed: 'Wednesday', thu: 'Thursday', fri: 'Friday' };
-const ALL_PERIODS = [1, 2, 3, 4, 6, 7, 8, 9];
-const ALL_LAB_SLOTS = [[1,2,3],[2,3,4],[6,7,8],[7,8,9]];
-const TIME_SLOTS = [
-  { period: 1, time: '9:00 - 9:50' },
-  { period: 2, time: '9:50 - 10:40' },
-  { period: 3, time: '10:40 - 11:30' },
-  { period: 4, time: '11:30 - 12:20' },
-  { period: 5, time: '12:20 - 1:00', isLunch: true },
-  { period: 6, time: '1:00 - 1:50' },
-  { period: 7, time: '1:50 - 2:40' },
-  { period: 8, time: '2:40 - 3:30' },
-  { period: 9, time: '3:30 - 4:20' },
-];
-
-function getDesignationLimit(teacherName = '') {
-  const n = teacherName.toLowerCase();
-  if (n.includes('asst.') || n.includes('assistant')) return 24;
-  if (n.includes('assoc.') || n.includes('associate')) return 12;
-  if (n.includes('prof.') || n.includes('professor')) return 8;
-  return 12;
-}
-
-function isTeacherFree(facultyData, dayKey, period) {
-  return !facultyData?.slots?.[`${dayKey}_${period}`];
-}
-
-function teacherHasLoad(facultyData, teacherName, slotLoad, loadUsed, teacherId) {
-  const limit = getDesignationLimit(teacherName);
-  const remaining = facultyData?.remainingLoad ?? limit;
-  const used = loadUsed[teacherId] || 0;
-  return (remaining - used) >= slotLoad;
-}
-
-function isEditedRoutine(existingSlots) {
-  for (const day of DAYS) {
-    if (existingSlots[day] && Object.keys(existingSlots[day]).length > 0) {
-      return true;
-    }
-  }
-  return false;
-}
-
-function checkTheoryFeasibility(subjectRow, grid, facultyMap, loadUsed) {
-  const required = subjectRow.theoryPerWeek;
-  const reasons = [];
-  
-  let freeSlots = 0;
-  let teacherAvailableSlots = 0;
-  
-  for (const day of DAYS) {
-    for (const period of ALL_PERIODS) {
-      if (!grid[day][period]?.occupied) {
-        freeSlots++;
-        
-        const hasAvailableTeacher = subjectRow.teacherOptions.some(t => {
-          const faculty = facultyMap[t.value] || { slots: {} };
-          return isTeacherFree(faculty, day, period) && 
-                 teacherHasLoad(faculty, t.label, 1.5, loadUsed, t.value);
-        });
-        
-        if (hasAvailableTeacher) {
-          teacherAvailableSlots++;
-        }
-      }
-    }
-  }
-  
-  if (freeSlots < required) {
-    reasons.push(`Only ${freeSlots} free slots available, need ${required}`);
-  }
-  
-  if (teacherAvailableSlots < required) {
-    reasons.push(`Only ${teacherAvailableSlots} slots with available teachers, need ${required}`);
-  }
-  
-  const totalCapacity = subjectRow.teacherOptions.reduce((sum, t) => {
-    const faculty = facultyMap[t.value] || {};
-    const limit = getDesignationLimit(t.label);
-    const remaining = faculty.remainingLoad ?? limit;
-    const used = loadUsed[t.value] || 0;
-    return sum + Math.max(0, remaining - used);
-  }, 0);
-  
-  const requiredLoad = required * 1.5;
-  if (totalCapacity < requiredLoad) {
-    reasons.push(`Teacher capacity ${totalCapacity.toFixed(1)} workload < required ${requiredLoad.toFixed(1)} workload`);
-  }
-  
-  return {
-    feasible: reasons.length === 0,
-    reasons,
-    availableSlots: teacherAvailableSlots,
-    requiredSlots: required
-  };
-}
-
-function checkLabFeasibility(subjectRow, grid, facultyMap, loadUsed) {
-  const reasons = [];
-  let validBlocks = 0;
-  
-  for (const day of DAYS) {
-    for (const slots of ALL_LAB_SLOTS) {
-      if (!slots.every(p => !grid[day][p]?.occupied)) continue;
-      
-      const hasAvailableTeacher = subjectRow.teacherOptions.some(t => {
-        const faculty = facultyMap[t.value] || { slots: {} };
-        const allFree = slots.every(p => isTeacherFree(faculty, day, p));
-        const hasLoad = teacherHasLoad(faculty, t.label, 3.0, loadUsed, t.value);
-        return allFree && hasLoad;
-      });
-      
-      if (hasAvailableTeacher) {
-        validBlocks++;
-      }
-    }
-  }
-  
-  if (validBlocks === 0) {
-    reasons.push('No 3-consecutive free periods available');
-    
-    let hasEmptyBlocks = false;
-    for (const day of DAYS) {
-      for (const slots of ALL_LAB_SLOTS) {
-        if (slots.every(p => !grid[day][p]?.occupied)) {
-          hasEmptyBlocks = true;
-          break;
-        }
-      }
-      if (hasEmptyBlocks) break;
-    }
-    
-    if (hasEmptyBlocks) {
-      reasons.push('Free blocks exist but no teacher available for full duration');
-    }
-  }
-  
-  const totalCapacity = subjectRow.teacherOptions.reduce((sum, t) => {
-    const faculty = facultyMap[t.value] || {};
-    const limit = getDesignationLimit(t.label);
-    const remaining = faculty.remainingLoad ?? limit;
-    const used = loadUsed[t.value] || 0;
-    return sum + Math.max(0, remaining - used);
-  }, 0);
-  
-  if (totalCapacity < 3.0) {
-    reasons.push(`Teacher capacity ${totalCapacity.toFixed(1)}hrs < required 3.0hrs`);
-  }
-  
-  return {
-    feasible: reasons.length === 0,
-    reasons,
-    validBlocks,
-    requiredBlocks: 1
-  };
-}
-
-function createFailureReport(subject, type, feasibilityResult, placedCount = 0) {
-  const report = {
-    subject: subject.subjectName.replace(/^\[.*?\]\s*/, ''),
-    type,
-    reasons: [...feasibilityResult.reasons]
-  };
-  
-  if (type === 'theory') {
-    report.required = subject.theoryPerWeek;
-    report.placed = placedCount;
-    if (placedCount > 0 && placedCount < subject.theoryPerWeek) {
-      report.reasons.unshift(`Partially placed: ${placedCount}/${subject.theoryPerWeek} periods`);
-    }
-  } else {
-    report.requiredBlocks = 1;
-    report.placedBlocks = placedCount;
-  }
-  
-  return report;
-}
-
-function formatFailureMessage(report) {
-  const prefix = report.type === 'lab' ? ' LAB' : ' THEORY';
-  let msg = `${prefix}: ${report.subject}`;
-  
-  if (report.type === 'theory') {
-    if (report.placed > 0) {
-      msg += ` — Placed ${report.placed}/${report.required} periods`;
-    } else {
-      msg += ` — Could not place any of ${report.required} periods`;
-    }
-  } else {
-    msg += ` — Could not place lab block`;
-  }
-  
-  if (report.reasons.length > 0) {
-    msg += `\n   Reasons: ${report.reasons.join('; ')}`;
-  }
-  
-  return msg;
-}
-
-function pickTeacher(teacherOptions, facultyMap, day, period, slotLoad, loadUsed, preferredTeacher = null) {
-  if (preferredTeacher) {
-    const faculty = facultyMap[preferredTeacher.value] || { slots: {} };
-    if (
-      isTeacherFree(faculty, day, period) &&
-      teacherHasLoad(faculty, preferredTeacher.label, slotLoad, loadUsed, preferredTeacher.value)
-    ) {
-      return preferredTeacher;
-    }
-  }
-  for (const t of teacherOptions) {
-    if (preferredTeacher && t.value === preferredTeacher.value) continue;
-    const faculty = facultyMap[t.value] || { slots: {} };
-    if (isTeacherFree(faculty, day, period) && teacherHasLoad(faculty, t.label, slotLoad, loadUsed, t.value)) {
-      return t;
-    }
-  }
-  return null;
-}
-
-function generateRoutine(subjectRows, existingSlots, facultyMap, loadUsed) {
-  const grid = {};
-  DAYS.forEach(day => {
-    grid[day] = {};
-    ALL_PERIODS.forEach(p => {
-      grid[day][p] = existingSlots[day]?.[p]
-        ? { occupied: true, existing: true, data: existingSlots[day][p] }
-        : { occupied: false };
-    });
-  });
-
-  const failures = [];
-  const isEdited = isEditedRoutine(existingSlots);
-
-  const getDayOrder = () => isEdited ? [...DAYS] : [...DAYS].sort(() => Math.random() - 0.5);
-  const getPeriodOrder = () => isEdited ? [...ALL_PERIODS] : [...ALL_PERIODS].sort(() => Math.random() - 0.5);
-  const getLabSlotOrder = () => isEdited ? [...ALL_LAB_SLOTS] : [...ALL_LAB_SLOTS].sort(() => Math.random() - 0.5);
-
-  const labSubjects = subjectRows.filter(r => r.isLab);
-  
-  for (const lab of labSubjects) {
-    const subjectName = lab.subjectName.replace(/^\[.*?\]\s*/, '');
-    
-    const feasibility = checkLabFeasibility(lab, grid, facultyMap, loadUsed);
-    if (!feasibility.feasible) {
-      failures.push(createFailureReport(lab, 'lab', feasibility, 0));
-      continue;
-    }
-    
-    let placed = false;
-
-    outer:
-    for (const day of getDayOrder()) {
-      for (const slots of getLabSlotOrder()) {
-        if (!slots.every(p => !grid[day][p]?.occupied)) continue;
-        
-        const teacher = pickTeacher(lab.teacherOptions, facultyMap, day, slots[0], 3.0, loadUsed, lab.preferredTeacher);
-        if (!teacher) continue;
-        
-        const allFree = slots.every(p => isTeacherFree(facultyMap[teacher.value] || { slots: {} }, day, p));
-        if (!allFree) continue;
-
-        slots.forEach(p => {
-          grid[day][p] = {
-            occupied: true, isLab: true,
-            subjectCode: lab.subjectId,
-            subjectName,
-            teacherId: teacher.value,
-            teacherName: teacher.label,
-            load: 1.0
-          };
-        });
-        loadUsed[teacher.value] = (loadUsed[teacher.value] || 0) + 3.0;
-        placed = true;
-        break outer;
-      }
-    }
-
-    if (!placed) {
-      failures.push(createFailureReport(lab, 'lab', { reasons: ['Placement failed despite passing feasibility'] }, 0));
-    }
-  }
-
-  const theorySubjects = subjectRows.filter(r => !r.isLab);
-  
-  for (const theory of theorySubjects) {
-    const subjectName = theory.subjectName.replace(/^\[.*?\]\s*/, '');
-    
-    const feasibility = checkTheoryFeasibility(theory, grid, facultyMap, loadUsed);
-    if (!feasibility.feasible) {
-      failures.push(createFailureReport(theory, 'theory', feasibility, 0));
-      continue;
-    }
-    
-    const periodsLeft = theory.theoryPerWeek;
-    const placedDays = new Set();
-    const lastPlacedPeriod = {};
-    let placedCount = 0;
-
-    for (let attempt = 0; attempt < periodsLeft; attempt++) {
-      let placed = false;
-
-      const dayOrder = getDayOrder().sort((a, b) => {
-        const aHas = placedDays.has(a) ? 1 : 0;
-        const bHas = placedDays.has(b) ? 1 : 0;
-        if (isEdited) return aHas - bHas;
-        return aHas - bHas || (Math.random() - 0.5);
-      });
-
-      for (const day of dayOrder) {
-        if (placed) break;
-        
-        for (const period of getPeriodOrder()) {
-          if (grid[day][period]?.occupied) continue;
-          
-          const lastP = lastPlacedPeriod[day];
-          if (lastP && Math.abs(period - lastP) === 1) continue;
-
-          const teacher = pickTeacher(theory.teacherOptions, facultyMap, day, period, 1.5, loadUsed, theory.preferredTeacher);
-          if (!teacher) continue;
-
-          grid[day][period] = {
-            occupied: true, isLab: false,
-            subjectCode: theory.subjectId,
-            subjectName,
-            teacherId: teacher.value,
-            teacherName: teacher.label,
-            load: 1.5
-          };
-          loadUsed[teacher.value] = (loadUsed[teacher.value] || 0) + 1.5;
-          placedDays.add(day);
-          lastPlacedPeriod[day] = period;
-          placedCount++;
-          placed = true;
-          break;
-        }
-      }
-
-      if (!placed) {
-        const currentFeasibility = checkTheoryFeasibility(theory, grid, facultyMap, loadUsed);
-        failures.push(createFailureReport(theory, 'theory', currentFeasibility, placedCount));
-        break;
-      }
-    }
-  }
-
-  return { grid, failures };
-}
-
 function RoutineGenerator() {
+  // Stores all active routines loaded from firebase
   const [allRoutines, setAllRoutines] = useState([]);
+  // Stores all available subjects loaded from firebase
   const [allSubjects, setAllSubjects] = useState([]);
+  // Caches teachers list by subject id to prevent duplicate network calls
   const [teachersCache, setTeachersCache] = useState({});
+  // Holds configuration states for each setup row visible in UI
   const [routineRows, setRoutineRows] = useState([]);
+  // Tracks loading state when the algorithm is processing schedules
   const [loading, setLoading] = useState(false);
+  // Holds global validation error strings
   const [error, setError] = useState('');
+  // Stores calculation output grids generated by algorithm
   const [previews, setPreviews] = useState([]);
+  // Tracks database update transactions status
   const [saving, setSaving] = useState(false);
 
+  // Runs once on mount to populate routines and subjects choices
   useEffect(() => {
     const load = async () => {
       try {
@@ -372,24 +42,31 @@ function RoutineGenerator() {
           getDocs(collection(db, 'routines')),
           getDocs(collection(db, 'subjects'))
         ]);
+        // Formats routines data for select drop down menus
         setAllRoutines(rSnap.docs.map(d => ({ id: d.id, ...d.data() })));
+        // Formats subjects data for selection lists
         setAllSubjects(sSnap.docs.map(d => ({ id: d.id, name: d.data().name || d.id })));
       } catch { setError('Failed to load data.'); }
     };
     load();
   }, []);
 
+  // Converts saved routines into value/label options for dropdown selection
   const routineOptions = allRoutines.map(r => ({ value: r.id, label: r.name || r.id }));
 
+  // Pulls list of assigned instructors for a specific course topic
   const loadTeachersForSubject = async (subjectId) => {
+    // Returns cached local data if this query ran previously
     if (teachersCache[subjectId]) return teachersCache[subjectId];
     const snap = await getDocs(collection(db, 'subjects', subjectId, 'teachers'));
     const teachers = {};
     snap.forEach(d => { teachers[d.id] = d.data().name || d.id; });
+    // Saves findings to memory state
     setTeachersCache(prev => ({ ...prev, [subjectId]: teachers }));
     return teachers;
   };
 
+  // Appends a new blank customization row section to UI layout list
   const addRoutineRow = () => {
     setRoutineRows(prev => [...prev, {
       id: Date.now(),
@@ -400,28 +77,35 @@ function RoutineGenerator() {
     }]);
   };
 
+  // Discards an individual configuration row block using its identification token
   const removeRoutineRow = (rowId) => {
     setRoutineRows(prev => prev.filter(r => r.id !== rowId));
   };
 
+  // Applies selective data state updates to properties of a target row item
   const updateRoutineRow = (rowId, changes) => {
     setRoutineRows(prev => prev.map(r => r.id === rowId ? { ...r, ...changes } : r));
   };
 
+  // Links an option choice topic chip to an individual workspace row block
   const handleAddSubject = async (rowId, option) => {
     if (!option) return;
+    // Requests matching instructors list from storage snapshot caches
     const teachers = await loadTeachersForSubject(option.value);
     const teacherOpts = Object.entries(teachers).map(([id, name]) => ({ value: id, label: name }));
+    // Evaluates string parameters to discover structural course type definitions
     const isLab = isLabSubject(option.label);
     const newSubject = {
       id: Date.now(),
       subjectId: option.value,
       subjectName: option.label,
       isLab,
+      // Sets initial class counts baseline based on course variant type
       theoryPerWeek: isLab ? 0 : 2,
       teacherOptions: teacherOpts,
       preferredTeacher: null
     };
+    // Directs values update back into core rows array definitions
     setRoutineRows(prev => prev.map(r => r.id === rowId ? {
       ...r,
       subjects: [...r.subjects, newSubject],
@@ -430,17 +114,20 @@ function RoutineGenerator() {
     } : r));
   };
 
+  // Drops a curriculum item token block out from active row memory tracks
   const handleRemoveSubject = (rowId, subjectId) => {
     setRoutineRows(prev => prev.map(r => {
       if (r.id !== rowId) return r;
       return {
         ...r,
         subjects: r.subjects.filter(s => s.id !== subjectId),
+        // Deselects item panel context tracker if target matches currently open item
         activeChip: r.activeChip === subjectId ? null : r.activeChip
       };
     }));
   };
 
+  // Rewrites parameters within chosen curriculum objects (like lecture count values)
   const updateSubject = (rowId, subjectId, changes) => {
     setRoutineRows(prev => prev.map(r => {
       if (r.id !== rowId) return r;
@@ -448,6 +135,7 @@ function RoutineGenerator() {
     }));
   };
 
+  // Evaluates UI input validity to confirm setup tracks can proceed safely
   const validate = () => {
     if (routineRows.length === 0) return 'Add at least one routine.';
     for (const row of routineRows) {
@@ -460,6 +148,7 @@ function RoutineGenerator() {
     return null;
   };
 
+  // Drives schedule arrangement calculation logic pipelines
   const handleGenerate = async () => {
     const err = validate();
     if (err) { setError(err); return; }
@@ -468,6 +157,7 @@ function RoutineGenerator() {
     setLoading(true);
 
     try {
+      // Isolates unique instructor keys appearing across all row slots configurations
       const allTeacherIds = new Set();
       routineRows.forEach(row => {
         row.subjects.forEach(sub => {
@@ -475,6 +165,7 @@ function RoutineGenerator() {
         });
       });
 
+      // Synchronizes data files maps detailing existing classes for selected teachers
       const facultyMap = {};
       await Promise.all([...allTeacherIds].map(async (id) => {
         try {
@@ -494,14 +185,17 @@ function RoutineGenerator() {
       const loadUsed = {};
       const results = [];
 
+      // Computes calendar timeline coordinate positions loop by loop
       for (const row of routineRows) {
         const existingSlots = {};
-        for (const day of DAYS) {
+        // Loads hardlocked items already set inside the target class timeline paths
+        for (const day of GENERATOR_DAYS) {
           const snap = await getDocs(collection(db, 'routines', row.selectedRoutine.value, day));
           existingSlots[day] = {};
           snap.forEach(d => { existingSlots[day][parseInt(d.id)] = d.data(); });
         }
 
+        // Activates the external mathematical core algorithm calculator script module
         const { grid, failures } = generateRoutine(row.subjects, existingSlots, facultyMap, loadUsed);
         const formattedFailures = failures.map(formatFailureMessage);
         
@@ -522,7 +216,7 @@ function RoutineGenerator() {
     }
   };
 
-  // ── SAVE ALL ROUTINES (FIXED) ──────────────────────────────────
+  // Handles bulk transaction disk write routing paths down to firestore database paths
   const handleSaveAll = async () => {
     if (previews.length === 0) return;
     setSaving(true);
@@ -530,17 +224,17 @@ function RoutineGenerator() {
 
     try {
       for (const preview of previews) {
-        for (const day of DAYS) {
+        for (const day of GENERATOR_DAYS) {
           for (const period of ALL_PERIODS) {
             const cell = preview.grid[day]?.[period];
-            
+            // Discards processing updates if spot is clear or already contains locked legacy inputs
             if (!cell?.occupied || cell.existing) continue;
             
             const dayKey = day;
             const slotId = `${dayKey}_${period}`;
             const routineDocRef = doc(db, 'routines', preview.routineId, dayKey, String(period));
             
-            // Check if this slot already has a different teacher (for load restoration)
+            // Reads targets to catch if a legacy instructor is being replaced by updates
             const existingRoutineSnap = await getDocs(collection(db, 'routines', preview.routineId, dayKey));
             const existingSlotData = existingRoutineSnap.docs.find(d => d.id === String(period));
             let previousTeacherId = null;
@@ -554,7 +248,7 @@ function RoutineGenerator() {
               }
             }
             
-            // Save to routine
+            // Commits calculated class parameters block context to standard routine paths
             await setDoc(routineDocRef, {
               sname: cell.subjectName,
               scode: cell.subjectCode,
@@ -564,7 +258,7 @@ function RoutineGenerator() {
               load: cell.load
             }, { merge: true });
             
-            // Save to Faculty_Routine slot
+            // Replicates properties data over into tracking files inside faculty profiles tracks
             await setDoc(
               doc(db, 'Faculty_Routine', cell.teacherId, 'slots', slotId),
               {
@@ -580,7 +274,7 @@ function RoutineGenerator() {
               { merge: true }
             );
             
-            // Update teacher's remainingLoad
+            // Updates operational load capacity balances inside instructor parent files
             const teacherRef = doc(db, 'Faculty_Routine', cell.teacherId);
             const teacherSnap = await getDoc(teacherRef);
             
@@ -589,10 +283,10 @@ function RoutineGenerator() {
               const limit = getDesignationLimit(cell.teacherName);
               const currentRemaining = teacherData.remainingLoad ?? limit;
               
-              // Check if this slot already exists for this teacher
               const existingSlotSnap = await getDoc(doc(db, 'Faculty_Routine', cell.teacherId, 'slots', slotId));
               const isNewSlot = !existingSlotSnap.exists() || !existingSlotSnap.data().routineId;
               
+              // Only subtracts workload weight balance points if coordinate slot is completely fresh
               if (isNewSlot) {
                 const newRemaining = Math.max(0, currentRemaining - cell.load);
                 await setDoc(teacherRef, {
@@ -602,15 +296,15 @@ function RoutineGenerator() {
                 }, { merge: true });
               }
             } else {
-              // Teacher doesn't exist yet - create with initial load
+              // Initializes a pristine status document layer if teacher was unregistered previously
               await setDoc(teacherRef, {
                 teacherName: cell.teacherName,
-                maxLoad: getDesignationLimit(cell.teacherName).limit,
-                remainingLoad: Number((getDesignationLimit(cell.teacherName).limit - cell.load).toFixed(2))
+                maxLoad: getDesignationLimit(cell.teacherName),
+                remainingLoad: Number((getDesignationLimit(cell.teacherName) - cell.load).toFixed(2))
               }, { merge: true });
             }
             
-            // Restore load for PREVIOUS teacher if we replaced their slot
+            // Returns work balance capabilities credit score back to previous displaced instructors
             if (previousTeacherId) {
               const prevTeacherRef = doc(db, 'Faculty_Routine', previousTeacherId);
               const prevTeacherSnap = await getDoc(prevTeacherRef);
@@ -618,12 +312,12 @@ function RoutineGenerator() {
               if (prevTeacherSnap.exists()) {
                 const prevData = prevTeacherSnap.data();
                 const prevLimit = getDesignationLimit(cell.teacherName);
-                const prevCurrentRemaining = prevData.remainingLoad ?? prevLimit.limit;
-                const restoredRemaining = Math.min(prevLimit.limit, prevCurrentRemaining + previousLoad);
+                const prevCurrentRemaining = prevData.remainingLoad ?? prevLimit;
+                const restoredRemaining = Math.min(prevLimit, prevCurrentRemaining + previousLoad);
                 
                 await setDoc(prevTeacherRef, {
                   teacherName: prevData.teacherName,
-                  maxLoad: prevLimit.limit,
+                  maxLoad: prevLimit,
                   remainingLoad: Number(restoredRemaining.toFixed(2))
                 }, { merge: true });
               }
@@ -633,7 +327,7 @@ function RoutineGenerator() {
       }
       
       alert('✅ All routines saved successfully!');
-      setPreviews([]); // Clear previews after successful save
+      setPreviews([]);
     } catch (err) {
       setError('❌ Save failed: ' + err.message);
       console.error('Save error:', err);
@@ -647,6 +341,7 @@ function RoutineGenerator() {
       <h2 className="rg-title">Routine Generator</h2>
       <p className="rg-subtitle">Add routines, configure subjects, then generate all at once.</p>
 
+      {/* Renders data input form modules sequentially row by row */}
       {routineRows.map((row, rowIdx) => {
         const usedSubjectIds = row.subjects.map(s => s.subjectId);
         const availableSubjects = allSubjects
@@ -692,6 +387,7 @@ function RoutineGenerator() {
                   </div>
                 ))}
 
+                {/* Alternates between a basic activation button or active auto-focused choice fields list */}
                 {!row.subjectPickerOpen ? (
                   <button className="rg-add-chip"
                     onClick={() => updateRoutineRow(row.id, { subjectPickerOpen: true, activeChip: null })}>
@@ -707,10 +403,11 @@ function RoutineGenerator() {
                 )}
               </div>
 
+              {/* Individual Topic Parameter Parameter Setup Drawer Interface Block */}
               {activeSubject && (
                 <div className="rg-panel">
                   <div className="rg-panel-title">
-                    &activeSubject.subjectName.replace(/^\[.*?\]\s*/, '')
+                    {activeSubject.subjectName.replace(/^\[.*?\]\s*/, '')}
                     {activeSubject.isLab && <span className="rg-lab-badge">LAB</span>}
                   </div>
 
@@ -755,31 +452,13 @@ function RoutineGenerator() {
       {error && <div className="rg-error">{error}</div>}
 
       <button className="rg-generate-btn" onClick={handleGenerate} disabled={loading}>
-        {loading ? (
-          <div className="rg-loader-micro" title="Generating routine...">
-            {[...Array(16)].map((_, i) => (
-              <div
-                key={i}
-                className="rg-loader-slot"
-                style={{
-                  animationDelay: `${(i % 4) * 0.15 + Math.floor(i / 4) * 0.1}s`,
-                  background: i % 3 === 0 ? 'rgba(255,255,255,0.35)' : 'rgba(255,255,255,0.25)'
-                }}
-              />
-            ))}
-          </div>
-        ) : (
-          'Generate All Routines →'
-        )}
+        {loading ? 'Generating...' : 'Generate All Routines →'}
       </button>
 
+      {/* Outputs structural visual grid matrix blocks matching generated results arrays maps */}
       {previews.length > 0 && (
         <>
-          <button 
-            className="rg-save-btn" 
-            onClick={handleSaveAll} 
-            disabled={saving}
-          >
+          <button className="rg-save-btn" onClick={handleSaveAll} disabled={saving}>
             {saving ? '💾 Saving...' : '💾 Save All Routines'}
           </button>
 
@@ -792,6 +471,7 @@ function RoutineGenerator() {
                   {preview.isEdited && <span className="rg-edited-badge"> EDITED</span>}
                 </div>
 
+                {/* Outputs warning metrics errors lines summary logs if processing items hit dead ends */}
                 {preview.failures.length > 0 && (
                   <div className="rg-failures-container">
                     {preview.failures.map((f, i) => (
@@ -800,6 +480,7 @@ function RoutineGenerator() {
                   </div>
                 )}
 
+                {/* Core Calendar Visual Grid Data Table Structure */}
                 <div className="rg-table-wrapper">
                   <table className="rg-table">
                     <thead>
@@ -811,7 +492,7 @@ function RoutineGenerator() {
                       </tr>
                     </thead>
                     <tbody>
-                      {DAYS.map(day => (
+                      {GENERATOR_DAYS.map(day => (
                         <tr key={day}>
                           <td className="day-col">{DAY_LABELS[day]}</td>
                           {TIME_SLOTS.map((slot, i) => {
@@ -839,7 +520,7 @@ function RoutineGenerator() {
                     </tbody>
                   </table>
                 </div>
-                <p className="rg-preview-legend">🟦 Theory &nbsp; 🟣 Lab &nbsp; 🟩 Existing</p>
+                <p className="rg-preview-legend">Bl Theory &nbsp; Vi Lab &nbsp; Gr Existing</p>
               </div>
             ))}
           </div>
