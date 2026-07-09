@@ -2,19 +2,12 @@ import React, { useState, useEffect } from 'react';
 import Select from 'react-select';
 import { db } from '../firebase';
 import { collection, getDocs, onSnapshot, doc, setDoc, deleteDoc, getDoc } from 'firebase/firestore';
+
+import { DAYS, DAYS_TO_FETCH, DAY_TO_KEY, TIME_SLOTS, getDesignationLimit } from './routineUtils';
+import { exportRoutineToDocx } from './RoutineDocxExporter';
+
 import './table.layout.css';
 import './table.feedback.css';
-
-import { Packer, Document, Table, TableRow, TableCell, Paragraph, WidthType, BorderStyle, AlignmentType, VerticalAlign } from 'docx';
-import { saveAs } from 'file-saver';
-
-function getDesignationLimit(teacherName = '') {
-  const n = teacherName.toLowerCase();
-  if (n.includes('asst.') || n.includes('assistant')) return { label: 'Assistant Professor', limit: 24 };
-  if (n.includes('assoc.') || n.includes('associate')) return { label: 'Associate Professor', limit: 12 };
-  if (n.includes('prof.') || n.includes('professor')) return { label: 'Professor', limit: 8 };
-  return { label: 'Associate Professor (default)', limit: 12 };
-}
 
 function RoutineTable({ 
   routineId = 1, 
@@ -27,27 +20,6 @@ function RoutineTable({
   const [selectedRoutine, setSelectedRoutine] = useState(null);
   const [scheduleData, setScheduleData] = useState({});
   
-  const daysToFetch = ['mon', 'tue', 'wed', 'thu', 'fri'];
-  
-  const dayToKey = {
-    'Monday': 'mon', 'Tuesday': 'tue', 'Wednesday': 'wed',
-    'Thursday': 'thu', 'Friday': 'fri'
-  };
-
-  const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
-  
-  const timeSlots = [
-    { period: 1, time: '9:00 - 9:50' },
-    { period: 2, time: '9:50 - 10:40' },
-    { period: 3, time: '10:40 - 11:30' },
-    { period: 4, time: '11:30 - 12:20' },
-    { period: 5, time: '12:20 - 1:00', isLunch: true },
-    { period: 6, time: '1:00 - 1:50' },
-    { period: 7, time: '1:50 - 2:40' },
-    { period: 8, time: '2:40 - 3:30' },
-    { period: 9, time: '3:30 - 4:20' }
-  ];
-
   const [subjectsMap, setSubjectsMap] = useState({});
   const [loadingSubjects, setLoadingSubjects] = useState(true);
   const [loadingSchedule, setLoadingSchedule] = useState(false);
@@ -70,33 +42,32 @@ function RoutineTable({
     ? routineOptions.find(opt => opt.value === selectedRoutine.id) 
     : null;
 
- // Calls YOUR Go backend — no API key, no proxy, no CORS workaround needed
-const sendPushifyNotification = async (routineName) => {
-  try {
-    const response = await fetch('http://localhost:8080/api/notify-students', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        title: 'Routine Updated',
-        description: `${routineName} has changed — please check the dashboard.`
-      })
-    });
+  const sendPushifyNotification = async (routineName) => {
+    try {
+      const response = await fetch('http://localhost:8080/api/notify-students', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: 'Routine Updated',
+          description: `${routineName} has changed — please check the dashboard.`
+        })
+      });
 
-    if (!response.ok) {
-      console.warn('Backend rejected notification request:', response.status);
-      return;
+      if (!response.ok) {
+        console.warn('Backend rejected notification request:', response.status);
+        return;
+      }
+      console.log(`Notification triggered for ${routineName}`);
+    } catch (err) {
+      console.error('Failed to reach notification backend:', err);
     }
-    console.log(`Notification triggered for ${routineName}`);
-  } catch (err) {
-    console.error('Failed to reach notification backend:', err);
-  }
-};
-  // Single doc read — fast conflict check
+  };
+
   const checkTeacherConflictInDatabase = async (teacherId, day, period) => {
     if (!teacherId) return null;
     setCheckingConflict(true);
     try {
-      const dayKey = dayToKey[day];
+      const dayKey = DAY_TO_KEY[day];
       const slotId = `${dayKey}_${period}`;
       const slotRef = doc(db, 'Faculty_Routine', teacherId, 'slots', slotId);
       const slotSnap = await getDoc(slotRef);
@@ -112,7 +83,6 @@ const sendPushifyNotification = async (routineName) => {
     }
   };
 
-  // Single doc read — fast overload check using remainingLoad
   const checkTeacherOverload = async (teacherId, teacherName, slotLoad) => {
     if (!teacherId) return null;
     try {
@@ -126,7 +96,6 @@ const sendPushifyNotification = async (routineName) => {
         const overage = Number((slotLoad - remainingLoad).toFixed(2));
         return { remainingLoad, limit, label, overloaded, overage };
       }
-      // Teacher not in Faculty_Routine yet — fresh, use full limit
       return { remainingLoad: limit, limit, label, overloaded: false, overage: 0 };
     } catch (err) {
       console.error('Error checking overload:', err);
@@ -149,7 +118,7 @@ const sendPushifyNotification = async (routineName) => {
     if (!selectedRoutine) { setScheduleData({}); return; }
     setLoadingSchedule(true);
     const unsubscribers = [];
-    daysToFetch.forEach(day => {
+    DAYS_TO_FETCH.forEach(day => {
       const unsubscribe = onSnapshot(collection(db, 'routines', selectedRoutine.id, day), (snapshot) => {
         const periods = snapshot.docs
           .map(d => ({ id: d.id, periodNumber: parseInt(d.id), ...d.data() }))
@@ -270,13 +239,12 @@ const sendPushifyNotification = async (routineName) => {
   const saveCell = async () => {
     if (!selectedRoutine || !activeCell) return;
     const { day, period } = activeCell;
-    const dayKey = dayToKey[day];
+    const dayKey = DAY_TO_KEY[day];
     if (!dayKey) { setFeedbackMessage({ type: 'error', message: 'Invalid day.' }); return; }
 
     const slotId = `${dayKey}_${period}`;
     const prevData = getPeriodData(day, period);
 
-    // 1. Conflict check
     if (editData.teacherId) {
       const conflict = await checkTeacherConflictInDatabase(editData.teacherId, day, period);
       if (conflict) {
@@ -288,7 +256,6 @@ const sendPushifyNotification = async (routineName) => {
       }
     }
 
-    // 2. Overload check
     const isLab = /\blab\b|\blaboratory\b/i.test(editData.subjectName || '');
     const slotLoad = isLab ? 1.0 : 1.5;
 
@@ -310,7 +277,6 @@ const sendPushifyNotification = async (routineName) => {
       const periodDocRef = doc(db, 'routines', selectedRoutine.id, dayKey, String(period));
 
       if (!editData.subjectCode) {
-        // --- CLEAR ---
         await deleteDoc(periodDocRef);
 
         if (prevData?.teacherId) {
@@ -318,7 +284,6 @@ const sendPushifyNotification = async (routineName) => {
           const prevSlotSnap = await getDoc(prevSlotRef);
           await deleteDoc(prevSlotRef);
 
-          // Restore load to old teacher
           if (prevSlotSnap.exists()) {
             const restoredLoad = prevSlotSnap.data().load || 0;
             const oldTeacherRef = doc(db, 'Faculty_Routine', prevData.teacherId);
@@ -334,7 +299,6 @@ const sendPushifyNotification = async (routineName) => {
 
         setFeedbackMessage({ type: 'success', message: 'Cell cleared successfully!' });
       } else {
-        // --- SAVE ---
         await setDoc(periodDocRef, {
           scode: editData.subjectCode,
           sname: editData.subjectName,
@@ -344,7 +308,6 @@ const sendPushifyNotification = async (routineName) => {
           updatedAt: new Date().toISOString()
         }, { merge: true });
 
-        // If teacher swapped — restore old teacher's load and delete old slot
         if (prevData?.teacherId && prevData.teacherId !== editData.teacherId) {
           const prevSlotRef = doc(db, 'Faculty_Routine', prevData.teacherId, 'slots', slotId);
           const prevSlotSnap = await getDoc(prevSlotRef);
@@ -363,7 +326,6 @@ const sendPushifyNotification = async (routineName) => {
           }
         }
 
-        // Write slot
         if (editData.teacherId) {
           const facultySlotRef = doc(db, 'Faculty_Routine', editData.teacherId, 'slots', slotId);
           await setDoc(facultySlotRef, {
@@ -376,7 +338,6 @@ const sendPushifyNotification = async (routineName) => {
             subjectCode: editData.subjectCode
           });
 
-          // Update teacher parent doc load tracking
           const { limit } = getDesignationLimit(editData.teacherName);
           const teacherDocRef = doc(db, 'Faculty_Routine', editData.teacherId);
           const teacherSnap = await getDoc(teacherDocRef);
@@ -387,7 +348,6 @@ const sendPushifyNotification = async (routineName) => {
               remainingLoad: Number((oldRemaining - slotLoad).toFixed(2))
             }, { merge: true });
           } else {
-            // First time this teacher is assigned
             await setDoc(teacherDocRef, {
               teacherName: editData.teacherName,
               maxLoad: limit,
@@ -399,13 +359,12 @@ const sendPushifyNotification = async (routineName) => {
         setFeedbackMessage({ type: 'success', message: 'Saved successfully!' });
       }
 
-      const timeSlot = timeSlots.find(s => s.period === period)?.time;
-      const dayIndex = days.indexOf(day);
+      const timeSlot = TIME_SLOTS.find(s => s.period === period)?.time;
+      const dayIndex = DAYS.indexOf(day);
       if (prevData?.teacherId !== editData.teacherId) {
         updateTeacherSchedule(selectedRoutine.id, dayIndex, timeSlot, editData.teacherId, prevData?.teacherId);
       }
 
-      // Fire push notification campaign asynchronously on success
       sendPushifyNotification(selectedRoutine.name || selectedRoutine.id);
 
       setTimeout(() => { setActiveCell(null); setFeedbackMessage(null); }, 1500);
@@ -419,7 +378,7 @@ const sendPushifyNotification = async (routineName) => {
   const clearCell = async () => {
     if (!selectedRoutine || !activeCell) return;
     const { day, period } = activeCell;
-    const dayKey = dayToKey[day];
+    const dayKey = DAY_TO_KEY[day];
     const slotId = `${dayKey}_${period}`;
     setSaving(true);
     try {
@@ -432,7 +391,6 @@ const sendPushifyNotification = async (routineName) => {
         const prevSlotSnap = await getDoc(prevSlotRef);
         await deleteDoc(prevSlotRef);
 
-        // Restore load
         if (prevSlotSnap.exists()) {
           const restoredLoad = prevSlotSnap.data().load || 0;
           const teacherDocRef = doc(db, 'Faculty_Routine', prevData.teacherId);
@@ -446,15 +404,13 @@ const sendPushifyNotification = async (routineName) => {
         }
       }
 
-      const timeSlot = timeSlots.find(s => s.period === period)?.time;
-      const dayIndex = days.indexOf(day);
+      const timeSlot = TIME_SLOTS.find(s => s.period === period)?.time;
+      const dayIndex = DAYS.indexOf(day);
       if (prevData?.teacherId) {
         updateTeacherSchedule(selectedRoutine.id, dayIndex, timeSlot, null, prevData.teacherId);
       }
 
       setFeedbackMessage({ type: 'success', message: 'Cell cleared!' });
-      
-      // Fire push notification campaign asynchronously on clearing cell
       sendPushifyNotification(selectedRoutine.name || selectedRoutine.id);
 
       setTimeout(() => { setActiveCell(null); setFeedbackMessage(null); }, 1500);
@@ -472,60 +428,7 @@ const sendPushifyNotification = async (routineName) => {
   };
 
   const handleDownload = () => {
-    if (!selectedRoutine) { alert('Please select a routine first.'); return; }
-    const docFile = new Document({
-      sections: [{
-        children: [
-          new Paragraph({
-            text: selectedRoutine.name || selectedRoutine.id || 'Weekly Schedule',
-            heading: 'Heading1',
-            alignment: AlignmentType.CENTER,
-          }),
-          new Paragraph({}),
-          new Table({
-            width: { size: 100, type: WidthType.PERCENTAGE },
-            borders: {
-              top: { style: BorderStyle.SINGLE, size: 1 },
-              bottom: { style: BorderStyle.SINGLE, size: 1 },
-              left: { style: BorderStyle.SINGLE, size: 1 },
-              right: { style: BorderStyle.SINGLE, size: 1 },
-            },
-            rows: [
-              new TableRow({
-                children: [
-                  new TableCell({ children: [new Paragraph('Day / Time')] }),
-                  ...timeSlots.map(slot => new TableCell({ children: [new Paragraph(slot.time)] })),
-                ],
-              }),
-              ...days.map((day) =>
-                new TableRow({
-                  children: [
-                    new TableCell({ children: [new Paragraph(day)] }),
-                    ...timeSlots.map((slot) => {
-                      if (slot.isLunch) {
-                        return new TableCell({ children: [new Paragraph('Lunch Break')], verticalAlign: VerticalAlign.CENTER });
-                      }
-                      const pd = getPeriodData(day, slot.period);
-                      let cellText = '-';
-                      if (pd?.subject) {
-                        cellText = pd.subject;
-                        if (pd.code) cellText += `\n[${pd.code}]`;
-                        if (pd.teacher) cellText += `\n${pd.teacher}`;
-                        if (pd.room) cellText += `\nRoom: ${pd.room}`;
-                      }
-                      return new TableCell({ children: [new Paragraph(cellText)], verticalAlign: VerticalAlign.CENTER });
-                    }),
-                  ],
-                })
-              ),
-            ],
-          }),
-        ],
-      }],
-    });
-    Packer.toBlob(docFile)
-      .then(blob => saveAs(blob, `${selectedRoutine.name || selectedRoutine.id}_routine.docx`))
-      .catch(err => { console.error(err); alert('Failed to generate DOCX.'); });
+    exportRoutineToDocx(selectedRoutine, getPeriodData);
   };
 
   if (loadingSubjects) return <div className="table-container"><p className="loading">Loading subjects...</p></div>;
@@ -583,7 +486,7 @@ const sendPushifyNotification = async (routineName) => {
               <thead>
                 <tr>
                   <th className="day-column">Day / Time</th>
-                  {timeSlots.map((slot, idx) => (
+                  {TIME_SLOTS.map((slot, idx) => (
                     <th key={idx} className={slot.isLunch ? 'lunch-header' : 'period-header'}>
                       {slot.time}
                     </th>
@@ -591,10 +494,10 @@ const sendPushifyNotification = async (routineName) => {
                 </tr>
               </thead>
               <tbody>
-                {days.map((day, dayIndex) => (
+                {DAYS.map((day, dayIndex) => (
                   <tr key={dayIndex}>
                     <td className="day-cell"><div className="day-name">{day}</div></td>
-                    {timeSlots.map((slot, idx) => {
+                    {TIME_SLOTS.map((slot, idx) => {
                       if (slot.isLunch) {
                         return (
                           <td key={idx} className="lunch-cell">
