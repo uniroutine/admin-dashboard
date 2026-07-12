@@ -5,39 +5,39 @@ import './AboutUs.css'; // Optional CSS for styling
 const contributors = [
   {
     name: 'Deep Narayan Banerjee',
-    image: 'https://avatars.githubusercontent.com/u/100768018?v=4',
+    image: 'https://cdn.corenexis.com/f/1TiCzqwayOm.jpeg',
     linkedin: 'https://www.linkedin.com/in/deep-narayan-banerjee-61421a317/',
     github: 'https://github.com/Bearcry55',
   },
   {
     name: 'Santanu Paik',
-    image: 'https://avatars.githubusercontent.com/u/100768018?v=4', // Replace with actual GitHub avatar URL
-    linkedin: 'https://www.linkedin.com/in/XXX/',
-    github: 'https://github.com/xxx',
+    image: 'https://cdn.corenexis.com/f/ryZY2ooshL0.jpeg', 
+    linkedin: 'https://www.linkedin.com/in/santanupaik/',
+    github: 'https://github.com/uniroutine-dev',
   },
   {
     name: 'Bidhan Chandra Roy',
-    image: 'https://avatars.githubusercontent.com/u/123456789?v=4', // Replace with actual GitHub avatar URL
-    linkedin: 'https://www.linkedin.com/in/XXX/',
-    github: 'https://github.com/xxx',
+    image: 'https://cdn.corenexis.com/f/5dDKwjoWGWZ.jpeg', 
+    linkedin: 'https://www.linkedin.com/in/bidhan-chandra-roy-1581183b1/',
+    github: 'https://github.com/',
   },
   {
     name: 'Saswata Das',
-    image: 'https://avatars.githubusercontent.com/u/100768018?v=4', // Replace with actual GitHub avatar URL
+    image: 'https://cdn.corenexis.com/f/5vaTLcvqRzG.jpeg',
     linkedin: 'https://www.linkedin.com/in/dassaswata/',
-    github: 'https://github.com/xxx',
+    github: 'https://github.com/dassaswata',
   },
   {
     name: 'Subhadip Paul',
-    image: 'https://avatars.githubusercontent.com/u/100768018?v=4', // Replace with actual GitHub avatar URL
+    image: 'https://cdn.corenexis.com/f/iamEXzASvBJ.jpeg', 
     linkedin: 'https://www.linkedin.com/in/subhadip-paul23/',
     github: 'https://github.com/SubhadipPaul523',
   },
   {
     name: 'Rakib Ali Raza',
-    image: 'https://avatars.githubusercontent.com/u/123456789?v=4', // Replace with actual GitHub avatar URL
-    linkedin: 'https://www.linkedin.com/in/XXX/',
-    github: 'https://github.com/xxx',
+    image: 'https://cdn.corenexis.com/f/CBzoIvnyjTn.jpeg', 
+    linkedin: 'https://www.linkedin.com/in/',
+    github: 'https://github.com/',
   },
   // Add more contributors here
 ];

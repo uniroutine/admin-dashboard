@@ -1,63 +1,81 @@
 .about-page {
-  padding: 0.5rem;
+  padding: 2rem 1rem; /* Increased padding so the page doesn't feel cramped */
   text-align: center;
-  overflow-y: hidden; /* hides vertical scrollbar */
+  /* Removed overflow-y: hidden; so users can actually scroll if content overflows the screen */
 }
 
 .card-container {
   display: grid;
-  grid-template-columns: repeat(1, 1fr); /* Default: 1 column for mobile */
-  gap: 1.5rem;
-  margin-top: 2rem;
+  grid-template-columns: repeat(1, 1fr); 
+  gap: 2rem; /* Increased gap between cards */
+  margin-top: 3rem;
   justify-items: center;
+  padding: 1rem;
 }
 
 @media (min-width: 640px) {
   .card-container {
-    grid-template-columns: repeat(2, 1fr); /* Small screens: 2 columns */
+    grid-template-columns: repeat(2, 1fr); 
   }
 }
 
 @media (min-width: 1024px) {
   .card-container {
-    grid-template-columns: repeat(3, 1fr); /* Desktop: 3 columns */
+    grid-template-columns: repeat(3, 1fr); 
   }
 }
 
 .profile-card {
   background-color: #ffffff;
-  border-radius: 10px;
-  padding: 1rem;
+  border-radius: 12px;
+  padding: 1.5rem; /* More internal padding */
   box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-  height: 192px;
-  width: 220px;
-  text-align: center;
-  transition: transform 0.2s ease;
+  
+  /* CRITICAL CHANGES HERE */
+  width: 260px; /* Made the card wider (from 220px) */
+  min-height: 250px; /* Using min-height instead of a fixed height so it expands if needed */
+  
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between; /* Pushes links to the bottom neatly */
+  
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
 
 .profile-card:hover {
   transform: translateY(-5px);
+  box-shadow: 0 6px 16px rgba(0,0,0,0.15);
 }
 
 .profile-image {
-  width: 80px;
-  height: 80px;
+  width: 90px; /* Slightly bigger image */
+  height: 90px;
   border-radius: 50%;
   object-fit: cover;
-  margin-bottom: 0.5rem;
+  margin-bottom: 0.75rem;
 }
 
 .profile-card h3 {
-  margin-bottom: 0.5rem;
-  font-size: 1.1rem;
+  margin-bottom: 0.75rem;
+  font-size: 1.2rem;
+  font-weight: 600;
+  line-height: 1.3; /* Keeps long names looking clean */
+}
+
+/* Changed links to sit side-by-side instead of stacking tightly */
+.links {
+  display: flex;
+  gap: 1rem; 
+  margin-top: auto; /* Ensures they anchor to the bottom of the card */
 }
 
 .links a {
-  display: block;
-  margin: 0.25rem 0;
+  display: inline-block;
   color: #0077b5;
   text-decoration: none;
   font-weight: 500;
+  font-size: 0.95rem;
 }
 
 .links a:hover {
